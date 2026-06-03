@@ -777,7 +777,21 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
                 continue
             function = raw_tool_call.get("function")
             if isinstance(function, dict) and function.get("name"):
-                tool_calls.append(raw_tool_call)
+                raw_arguments = function.get("arguments")
+                if isinstance(raw_arguments, str):
+                    arguments = raw_arguments
+                else:
+                    arguments = json.dumps(raw_arguments if isinstance(raw_arguments, dict) else {}, ensure_ascii=False)
+                tool_calls.append(
+                    {
+                        "id": str(raw_tool_call.get("id") or raw_tool_call.get("call_id") or f"tool-call-{index + 1}"),
+                        "type": "function",
+                        "function": {
+                            "name": str(function.get("name") or ""),
+                            "arguments": arguments,
+                        },
+                    }
+                )
                 continue
 
             func_name = str(raw_tool_call.get("func_name") or raw_tool_call.get("name") or "").strip()
@@ -897,9 +911,12 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
                     parsed_args = args if isinstance(args, dict) else {}
                 tool_calls.append(
                     {
-                        "call_id": str(raw_tool_call.get("call_id") or raw_tool_call.get("id") or f"tool-call-{index + 1}"),
-                        "func_name": str(raw_tool_call.get("func_name") or ""),
-                        "args": parsed_args,
+                        "id": str(raw_tool_call.get("call_id") or raw_tool_call.get("id") or f"tool-call-{index + 1}"),
+                        "type": "function",
+                        "function": {
+                            "name": str(raw_tool_call.get("func_name") or ""),
+                            "arguments": parsed_args,
+                        },
                         "extra_content": raw_tool_call.get("extra_content") if isinstance(raw_tool_call.get("extra_content"), dict) else None,
                     }
                 )
@@ -924,9 +941,12 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
                 args = {}
             tool_calls.append(
                 {
-                    "call_id": str(raw_tool_call.get("id") or f"tool-call-{index + 1}"),
-                    "func_name": func_name,
-                    "args": args,
+                    "id": str(raw_tool_call.get("id") or raw_tool_call.get("call_id") or f"tool-call-{index + 1}"),
+                    "type": "function",
+                    "function": {
+                        "name": func_name,
+                        "arguments": args,
+                    },
                     "extra_content": None,
                 }
             )
