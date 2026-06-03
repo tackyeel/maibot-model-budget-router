@@ -1,0 +1,35 @@
+[plugin]
+enabled = true
+config_version = "1.3.0"
+config_path = "/MaiMBot/config/model_config.toml"
+state_path = "data/router_state.json"
+log_detail = true
+health_penalty_seconds = 45
+max_failover_attempts = 3
+latency_weight = 1.0
+cost_weight = 0.35
+balance_weight = 0.65
+auto_sync_providers = true
+auto_disable_on_429 = true
+
+[pools]
+default = ["gemini-2.5-flash", "deepseek-v3"]
+timing_gate = ["gemini-2.5-flash"]
+planner = ["gemini-2.5-flash", "deepseek-v3"]
+memory = ["gemini-2.5-flash", "deepseek-v3"]
+mid_memory = ["gemini-2.5-flash", "deepseek-v3"]
+replyer = ["deepseek-v3", "gemini-2.5-flash"]
+utils = ["gemini-2.5-flash", "deepseek-v3"]
+learner = ["gemini-2.5-flash", "deepseek-v3"]
+emoji = ["gemini-2.5-flash"]
+vlm = ["gemini-2.5-flash"]
+
+[providers]
+default_balance_yuan = 9999.0
+default_daily_budget_yuan = 9999.0
+default_token_balance = 0
+default_daily_token_budget = 0
+
+[providers.overrides]
+# Relay providers are auto-synced from MaiBot model_config.toml when
+# auto_sync_providers is enabled. You can edit them in WebUI after install.

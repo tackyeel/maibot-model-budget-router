@@ -1,0 +1,49 @@
+{
+  "manifest_version": 2,
+  "id": "tackyeel.maibot-model-budget-router",
+  "name": "Model Budget Router",
+  "version": "1.0.0",
+  "description": "Route MaiBot LLM requests by task, relay budget, balance, latency, and failures. Useful for classifying and managing many free or low-cost relay providers.",
+  "author": {
+    "name": "tackyeel",
+    "url": "https://github.com/tackyeel"
+  },
+  "license": "MIT",
+  "urls": {
+    "repository": "https://github.com/tackyeel/maibot-model-budget-router",
+    "homepage": "https://github.com/tackyeel/maibot-model-budget-router",
+    "documentation": "https://github.com/tackyeel/maibot-model-budget-router#readme",
+    "issues": "https://github.com/tackyeel/maibot-model-budget-router/issues"
+  },
+  "host_application": {
+    "min_version": "1.0.0",
+    "max_version": "1.99.99"
+  },
+  "sdk": {
+    "min_version": "2.5.0",
+    "max_version": "2.99.99"
+  },
+  "dependencies": [
+    {
+      "type": "python_package",
+      "name": "httpx",
+      "version_spec": ">=0.24.0"
+    }
+  ],
+  "llm_providers": [
+    {
+      "client_type": "budget_router",
+      "name": "Model Budget Router",
+      "description": "Budget, latency, and failover router for OpenAI-compatible relay providers.",
+      "version": "1.0.0"
+    }
+  ],
+  "capabilities": [],
+  "i18n": {
+    "default_locale": "zh-CN",
+    "supported_locales": [
+      "zh-CN"
+    ]
+  },
+  "plugin_type": "provider"
+}
