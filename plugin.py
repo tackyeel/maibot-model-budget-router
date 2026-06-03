@@ -410,7 +410,7 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
             "plugin_id": plugin_id or "local.model-budget-router-cn",
             "plugin_info": {
                 "name": "模型预算分配器",
-                "version": plugin_version or "1.0.3",
+                "version": plugin_version or "1.0.4",
                 "description": "按任务、余额、预算、延迟和失败率自动选择中转站与模型。",
                 "author": plugin_author,
             },
@@ -435,7 +435,7 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
         CLIENT_TYPE,
         name="模型预算分配器",
         description="按余额、预算、延迟、失败率路由 OpenAI 兼容模型请求",
-        version="1.0.3",
+        version="1.0.4",
     )
     async def budget_router_provider(self, operation: str, request: dict[str, Any]) -> dict[str, Any]:
         if operation != "response":
@@ -644,6 +644,7 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
 
         raw_names = self._pool_model_names(task_name)
         candidates: list[Candidate] = []
+        disabled_candidates: list[Candidate] = []
         for name in raw_names:
             model = model_by_name.get(name)
             if not isinstance(model, dict):
@@ -658,6 +659,36 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
             if not self._provider_has_budget(provider_name):
                 continue
             if self._candidate_auto_disabled(name, provider_name):
+                disabled_candidates.append(
+                    Candidate(
+                        name=name,
+                        model_identifier=str(model.get("model_identifier") or name),
+                        provider_name=provider_name,
+                        base_url=str(provider.get("base_url") or "").rstrip("/"),
+                        api_key=str(provider.get("api_key") or ""),
+                        timeout=float(provider.get("timeout") or 30),
+                        price_in=float(model.get("price_in") or 0),
+                        price_out=float(model.get("price_out") or 0),
+                        cache_read_price_in=self._first_float(
+                            model,
+                            "cache_read_price_in",
+                            "cache_price_read",
+                            "cache_price_read_in",
+                            "price_cache_read",
+                            "cache_price_in",
+                        ),
+                        cache_create_price_in=self._first_float(
+                            model,
+                            "cache_create_price_in",
+                            "cache_write_price_in",
+                            "cache_price_create",
+                            "cache_price_create_in",
+                            "price_cache_create",
+                        ),
+                        visual=bool(model.get("visual", False)),
+                        extra_params=dict(model.get("extra_params") or {}),
+                    )
+                )
                 continue
 
             candidates.append(
@@ -690,6 +721,13 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
                     extra_params=dict(model.get("extra_params") or {}),
                 )
             )
+
+        if not candidates and disabled_candidates:
+            self.ctx.logger.warning(
+                "模型池 %s 的候选都处于自动关闭状态，临时启用兜底候选避免任务无模型",
+                task_name,
+            )
+            candidates = disabled_candidates
 
         for candidate in candidates:
             candidate.score = self._score_candidate(candidate)
@@ -1291,14 +1329,21 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
         for pool_name, value in list(pools.items()):
             items = value if isinstance(value, list) else [value]
             normalized_items: list[dict[str, Any]] = []
+            enabled_count = sum(1 for item in items if self._as_bool(self._normalize_pool_item(item).get("enabled", True), default=True))
             for item in items:
                 pool_item = self._normalize_pool_item(item)
                 if str(pool_item.get("name") or "").strip() == model_name and self._as_bool(pool_item.get("enabled", True), default=True):
+                    if enabled_count <= 1:
+                        pool_item["disabled_reason"] = "保留为模型池最后一个可用候选，未自动关闭；原始错误：" + error[-120:]
+                        pool_item["disabled_type"] = "kept_last_candidate"
+                        normalized_items.append(pool_item)
+                        continue
                     pool_item["enabled"] = False
                     pool_item["disabled_reason"] = error[-180:]
                     pool_item["disabled_type"] = disable_type
                     pool_item["disabled_at"] = disabled_at
                     changed = True
+                    enabled_count -= 1
                     self.ctx.logger.warning("模型已从模型池关闭: pool=%s model=%s type=%s", pool_name, model_name, disable_type)
                 normalized_items.append(pool_item)
             pools[pool_name] = normalized_items
