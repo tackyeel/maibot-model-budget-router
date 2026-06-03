@@ -2,7 +2,7 @@
   "manifest_version": 2,
   "id": "tackyeel.maibot-model-budget-router",
   "name": "Model Budget Router",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Route MaiBot LLM requests by task, relay budget, balance, latency, and failures. Useful for classifying and managing many free or low-cost relay providers.",
   "author": {
     "name": "tackyeel",
@@ -35,7 +35,7 @@
       "client_type": "budget_router",
       "name": "Model Budget Router",
       "description": "Budget, latency, and failover router for OpenAI-compatible relay providers.",
-      "version": "1.0.2"
+      "version": "1.0.3"
     }
   ],
   "capabilities": [],

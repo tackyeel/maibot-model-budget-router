@@ -1,6 +1,6 @@
 [plugin]
 enabled = true
-config_version = "1.3.0"
+config_version = "1.4.0"
 config_path = "/MaiMBot/config/model_config.toml"
 state_path = "data/router_state.json"
 log_detail = true
@@ -11,18 +11,20 @@ cost_weight = 0.35
 balance_weight = 0.65
 auto_sync_providers = true
 auto_disable_on_429 = true
+auto_disable_on_errors = true
+auto_disable_error_threshold = 3
 
 [pools]
-default = ["gemini-2.5-flash", "deepseek-v3"]
-timing_gate = ["gemini-2.5-flash"]
-planner = ["gemini-2.5-flash", "deepseek-v3"]
-memory = ["gemini-2.5-flash", "deepseek-v3"]
-mid_memory = ["gemini-2.5-flash", "deepseek-v3"]
-replyer = ["deepseek-v3", "gemini-2.5-flash"]
-utils = ["gemini-2.5-flash", "deepseek-v3"]
-learner = ["gemini-2.5-flash", "deepseek-v3"]
-emoji = ["gemini-2.5-flash"]
-vlm = ["gemini-2.5-flash"]
+default = [{ name = "gemini-2.5-flash", enabled = true }, { name = "deepseek-v3", enabled = true }]
+timing_gate = [{ name = "gemini-2.5-flash", enabled = true }]
+planner = [{ name = "gemini-2.5-flash", enabled = true }, { name = "deepseek-v3", enabled = true }]
+memory = [{ name = "gemini-2.5-flash", enabled = true }, { name = "deepseek-v3", enabled = true }]
+mid_memory = [{ name = "gemini-2.5-flash", enabled = true }, { name = "deepseek-v3", enabled = true }]
+replyer = [{ name = "deepseek-v3", enabled = true }, { name = "gemini-2.5-flash", enabled = true }]
+utils = [{ name = "gemini-2.5-flash", enabled = true }, { name = "deepseek-v3", enabled = true }]
+learner = [{ name = "gemini-2.5-flash", enabled = true }, { name = "deepseek-v3", enabled = true }]
+emoji = [{ name = "gemini-2.5-flash", enabled = true }]
+vlm = [{ name = "gemini-2.5-flash", enabled = true }]
 
 [providers]
 default_balance_yuan = 9999.0

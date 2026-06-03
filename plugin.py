@@ -72,7 +72,7 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
         return {
             "plugin": {
                 "enabled": True,
-                "config_version": "1.3.0",
+                "config_version": "1.4.0",
                 "config_path": "/MaiMBot/config/model_config.toml",
                 "state_path": "data/router_state.json",
                 "log_detail": True,
@@ -83,6 +83,8 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
                 "balance_weight": 0.65,
                 "auto_sync_providers": True,
                 "auto_disable_on_429": True,
+                "auto_disable_on_errors": True,
+                "auto_disable_error_threshold": 3,
             },
             "pools": {
                 "default": ["gemini-3.1-flash-lite", "gemini-3.1-pro"],
@@ -139,15 +141,19 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
 
         plugin = normalized.setdefault("plugin", {})
         if isinstance(plugin, dict):
-            plugin["config_version"] = "1.3.0"
+            plugin["config_version"] = "1.4.0"
             plugin.setdefault("auto_sync_providers", True)
             plugin.setdefault("auto_disable_on_429", True)
+            plugin.setdefault("auto_disable_on_errors", True)
+            plugin.setdefault("auto_disable_error_threshold", 3)
 
         pools = normalized.setdefault("pools", {})
         if isinstance(pools, dict):
             for key, value in list(pools.items()):
                 if isinstance(value, str):
-                    pools[key] = [value]
+                    pools[key] = [{"name": value, "enabled": True}]
+                elif isinstance(value, list):
+                    pools[key] = [self._normalize_pool_item(item) for item in value]
                 elif not isinstance(value, list):
                     pools[key] = []
 
@@ -214,7 +220,7 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
                 "fields": {
                     "enabled": self._schema_field("enabled", "boolean", True, "启用插件", "是否启用模型预算分配器", "switch", 0),
                     "config_version": self._schema_field(
-                        "config_version", "string", "1.3.0", "配置版本", "配置文件版本，请勿手动修改。", "text", 1, disabled=True
+                        "config_version", "string", "1.4.0", "配置版本", "配置文件版本，请勿手动修改。", "text", 1, disabled=True
                     ),
                     "config_path": self._schema_field(
                         "config_path",
@@ -254,7 +260,13 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
                         "auto_sync_providers", "boolean", True, "自动同步中转站", "打开插件配置页或插件启动时，从模型管理配置自动补齐新中转站。", "switch", 10
                     ),
                     "auto_disable_on_429": self._schema_field(
-                        "auto_disable_on_429", "boolean", True, "429 自动禁用模型", "上游返回 429、余额不足或额度耗尽时，自动跳过对应模型@站点，避免继续命中没额度的模型。", "switch", 11
+                        "auto_disable_on_429", "boolean", True, "429/403 自动关闭池内模型", "上游返回 429、403、余额不足或额度耗尽时，自动关闭模型池里的对应模型，避免继续命中没额度的模型。", "switch", 11
+                    ),
+                    "auto_disable_on_errors": self._schema_field(
+                        "auto_disable_on_errors", "boolean", True, "普通错误自动关闭模型", "排除 429、403、额度不足和超时后，普通模型错误累计达到阈值时，自动关闭模型池里的对应模型。", "switch", 12
+                    ),
+                    "auto_disable_error_threshold": self._schema_field(
+                        "auto_disable_error_threshold", "integer", 3, "普通错误关闭阈值", "普通模型错误累计多少次后关闭模型池里的对应模型。", "slider", 13, min_value=1, max_value=10, step=1
                     ),
                 },
             },
@@ -272,15 +284,15 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
                     "memory": self._schema_list_field(
                         "memory",
                         ["gemini-3.1-flash-lite", "gemini-3.1-pro", "gpt-5.5", "gemini-3-flash-preview", "gemini-2.5-flash"],
-                        "???????",
-                        "???????????",
+                        "长期记忆模型池",
+                        "长期记忆总结、抽取和写回任务使用。",
                         3,
                     ),
                     "mid_memory": self._schema_list_field(
                         "mid_memory",
                         ["gemini-3.1-flash-lite", "gemini-3.1-pro", "gemini-3-flash-preview", "gemini-2.5-flash", "gpt-5.5"],
-                        "???????",
-                        "???????????",
+                        "中期记忆模型池",
+                        "中期记忆压缩、整理和回顾任务使用。",
                         4,
                     ),
                     "replyer": self._schema_list_field(
@@ -398,7 +410,7 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
             "plugin_id": plugin_id or "local.model-budget-router-cn",
             "plugin_info": {
                 "name": "模型预算分配器",
-                "version": plugin_version or "1.0.0",
+                "version": plugin_version or "1.0.3",
                 "description": "按任务、余额、预算、延迟和失败率自动选择中转站与模型。",
                 "author": plugin_author,
             },
@@ -423,7 +435,7 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
         CLIENT_TYPE,
         name="模型预算分配器",
         description="按余额、预算、延迟、失败率路由 OpenAI 兼容模型请求",
-        version="1.0.0",
+        version="1.0.3",
     )
     async def budget_router_provider(self, operation: str, request: dict[str, Any]) -> dict[str, Any]:
         if operation != "response":
@@ -525,6 +537,7 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
             "enabled", "config_version", "config_path", "state_path", "log_detail",
             "health_penalty_seconds", "max_failover_attempts", "latency_weight", "cost_weight",
             "balance_weight", "auto_sync_providers", "auto_disable_on_429",
+            "auto_disable_on_errors", "auto_disable_error_threshold",
         ):
             if key in plugin:
                 lines.append(f"{key} = {cls._toml_value(plugin[key])}")
@@ -567,6 +580,9 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
             return repr(float(value))
         if isinstance(value, list):
             return "[" + ", ".join(cls._toml_value(item) for item in value) + "]"
+        if isinstance(value, dict):
+            items = ", ".join(f"{cls._toml_key(str(key))} = {cls._toml_value(item)}" for key, item in value.items())
+            return "{ " + items + " }"
         text = str(value)
         return json.dumps(text, ensure_ascii=False)
 
@@ -684,7 +700,17 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
         raw_pool = pools.get(task_name) or pools.get("default") or []
         if isinstance(raw_pool, str):
             return [raw_pool]
-        return [str(item) for item in raw_pool if str(item).strip()] if isinstance(raw_pool, list) else []
+        if not isinstance(raw_pool, list):
+            return []
+        names: list[str] = []
+        for item in raw_pool:
+            pool_item = self._normalize_pool_item(item)
+            if not self._as_bool(pool_item.get("enabled", True), default=True):
+                continue
+            name = str(pool_item.get("name") or "").strip()
+            if name:
+                names.append(name)
+        return names
 
     @staticmethod
     def _first_float(source: dict[str, Any], *keys: str) -> float:
@@ -961,6 +987,7 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
             self._update_latency(model, elapsed)
             provider["consecutive_failures"] = 0
             model["consecutive_failures"] = 0
+            model["general_error_count"] = 0
             provider["success_count"] = int(provider.get("success_count") or 0) + 1
             model["success_count"] = int(model.get("success_count") or 0) + 1
             usage = result.get("usage") if isinstance(result.get("usage"), dict) else {}
@@ -989,13 +1016,28 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
             provider["last_error"] = error[-300:]
             model["last_error"] = error[-300:]
             if bool(self._cfg("plugin", "auto_disable_on_429", default=True)) and self._is_quota_or_429_error(error):
-                self._mark_candidate_auto_disabled_locked(candidate, error)
+                self._mark_candidate_auto_disabled_locked(candidate, error, disable_type="quota_or_429_403")
+                self._disable_model_in_pools(candidate.name, error, disable_type="quota_or_429_403")
                 self.ctx.logger.warning(
-                    "??????????????: model=%s provider=%s reason=%s",
+                    "模型池模型已因 429/403/额度错误自动关闭: model=%s provider=%s reason=%s",
                     candidate.name,
                     candidate.provider_name,
                     error[-180:],
                 )
+            elif self._should_count_general_error(error):
+                general_errors = int(model.get("general_error_count") or 0) + 1
+                model["general_error_count"] = general_errors
+                threshold = max(1, int(self._cfg("plugin", "auto_disable_error_threshold", default=3)))
+                if bool(self._cfg("plugin", "auto_disable_on_errors", default=True)) and general_errors >= threshold:
+                    self._mark_candidate_auto_disabled_locked(candidate, error, disable_type="general_error")
+                    self._disable_model_in_pools(candidate.name, error, disable_type="general_error")
+                    self.ctx.logger.warning(
+                        "模型池模型已因普通错误累计 %s 次自动关闭: model=%s provider=%s reason=%s",
+                        general_errors,
+                        candidate.name,
+                        candidate.provider_name,
+                        error[-180:],
+                    )
             penalty = float(self._cfg("plugin", "health_penalty_seconds", default=45))
             if int(model.get("consecutive_failures") or 0) >= 2:
                 model["cooldown_until"] = time.time() + penalty
@@ -1188,7 +1230,10 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
         return max(0.0, min(1.0, (daily_budget - spent) / max(daily_budget, 0.001)))
 
     def _candidate_auto_disabled(self, model_name: str, provider_name: str) -> bool:
-        if not bool(self._cfg("plugin", "auto_disable_on_429", default=True)):
+        if not (
+            bool(self._cfg("plugin", "auto_disable_on_429", default=True))
+            or bool(self._cfg("plugin", "auto_disable_on_errors", default=True))
+        ):
             return False
         provider_disabled = self._provider_state(provider_name).get("auto_disabled_models")
         if isinstance(provider_disabled, dict) and provider_disabled.get(model_name):
@@ -1201,26 +1246,88 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
         text = error.lower()
         patterns = (
             "429",
+            "403",
             "rate limit",
             "too many requests",
             "insufficient",
             "quota",
-            "??",
-            "????",
-            "???",
-            "??",
+            "quota is not enough",
+            "balance",
+            "no credit",
+            "not enough",
+            "余额不足",
+            "额度不足",
+            "额度耗尽",
+            "余额耗尽",
+            "欠费",
+            "无额度",
             "rate_limit",
             "model_capacity_exhausted",
         )
         return any(pattern in text for pattern in patterns)
 
-    def _mark_candidate_auto_disabled_locked(self, candidate: Candidate, error: str) -> None:
+    @staticmethod
+    def _is_timeout_error(error: str) -> bool:
+        text = error.lower()
+        return any(pattern in text for pattern in ("timeout", "timed out", "readtimeout", "connecttimeout", "超时"))
+
+    def _should_count_general_error(self, error: str) -> bool:
+        return not self._is_quota_or_429_error(error) and not self._is_timeout_error(error)
+
+    def _mark_candidate_auto_disabled_locked(self, candidate: Candidate, error: str, *, disable_type: str) -> None:
         provider = self._provider_state(candidate.provider_name)
         model = self._model_state(candidate.name)
         disabled_at = int(time.time())
-        payload = {"disabled_at": disabled_at, "reason": error[-300:]}
+        payload = {"disabled_at": disabled_at, "reason": error[-300:], "type": disable_type}
         provider.setdefault("auto_disabled_models", {})[candidate.name] = payload
         model.setdefault("auto_disabled_providers", {})[candidate.provider_name] = payload
+
+    def _disable_model_in_pools(self, model_name: str, error: str, *, disable_type: str) -> bool:
+        pools = self._config.get("pools") if isinstance(self._config.get("pools"), dict) else {}
+        if not isinstance(pools, dict):
+            return False
+        changed = False
+        disabled_at = int(time.time())
+        for pool_name, value in list(pools.items()):
+            items = value if isinstance(value, list) else [value]
+            normalized_items: list[dict[str, Any]] = []
+            for item in items:
+                pool_item = self._normalize_pool_item(item)
+                if str(pool_item.get("name") or "").strip() == model_name and self._as_bool(pool_item.get("enabled", True), default=True):
+                    pool_item["enabled"] = False
+                    pool_item["disabled_reason"] = error[-180:]
+                    pool_item["disabled_type"] = disable_type
+                    pool_item["disabled_at"] = disabled_at
+                    changed = True
+                    self.ctx.logger.warning("模型已从模型池关闭: pool=%s model=%s type=%s", pool_name, model_name, disable_type)
+                normalized_items.append(pool_item)
+            pools[pool_name] = normalized_items
+        if changed:
+            self._write_plugin_config()
+        return changed
+
+    @staticmethod
+    def _normalize_pool_item(item: Any) -> dict[str, Any]:
+        if isinstance(item, dict):
+            name = str(item.get("name") or item.get("model") or item.get("model_name") or "").strip()
+            extra = {str(key): value for key, value in item.items() if str(key) not in {"name", "model", "model_name", "enabled"}}
+            return {"name": name, "enabled": ModelBudgetRouterPlugin._as_bool(item.get("enabled", True), default=True), **extra}
+        return {"name": str(item).strip(), "enabled": True}
+
+    @staticmethod
+    def _as_bool(value: Any, *, default: bool = False) -> bool:
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return default
+        if isinstance(value, (int, float)):
+            return bool(value)
+        text = str(value).strip().lower()
+        if text in {"true", "1", "yes", "on", "enabled", "启用", "开"}:
+            return True
+        if text in {"false", "0", "no", "off", "disabled", "禁用", "关"}:
+            return False
+        return default
 
     def _provider_state(self, provider_name: str) -> dict[str, Any]:
         providers = self._state.setdefault("providers", {})
@@ -1324,8 +1431,13 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
 
     @classmethod
     def _schema_list_field(cls, name: str, default: list[str], label: str, hint: str, order: int) -> dict[str, Any]:
-        field = cls._schema_field(name, "array", default, label, hint, "list", order)
-        field["item_type"] = "string"
+        default_items = [{"name": item, "enabled": True} for item in default]
+        field = cls._schema_field(name, "array", default_items, label, hint, "list", order)
+        field["item_type"] = "object"
+        field["item_fields"] = {
+            "enabled": cls._schema_field("enabled", "boolean", True, "启用", "是否允许分配请求到这个模型。", "switch", 0),
+            "name": cls._schema_field("name", "string", "", "模型名称", "模型管理里的真实模型名称。", "text", 1),
+        }
         field["min_items"] = 0
         field["max_items"] = None
         return field
