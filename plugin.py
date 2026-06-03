@@ -761,11 +761,44 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
             if raw_message.get("tool_call_id"):
                 message["tool_call_id"] = raw_message.get("tool_call_id")
             if raw_message.get("tool_calls"):
-                message["tool_calls"] = raw_message.get("tool_calls")
+                message["tool_calls"] = self._to_openai_tool_calls(raw_message.get("tool_calls"))
             parts = raw_message.get("parts")
             message["content"] = self._to_openai_content(parts)
             messages.append(message)
         return messages
+
+    @classmethod
+    def _to_openai_tool_calls(cls, raw_tool_calls: Any) -> list[dict[str, Any]]:
+        if not isinstance(raw_tool_calls, list):
+            return []
+        tool_calls: list[dict[str, Any]] = []
+        for index, raw_tool_call in enumerate(raw_tool_calls):
+            if not isinstance(raw_tool_call, dict):
+                continue
+            function = raw_tool_call.get("function")
+            if isinstance(function, dict) and function.get("name"):
+                tool_calls.append(raw_tool_call)
+                continue
+
+            func_name = str(raw_tool_call.get("func_name") or raw_tool_call.get("name") or "").strip()
+            if not func_name:
+                continue
+            args = raw_tool_call.get("args")
+            if isinstance(args, str):
+                arguments = args
+            else:
+                arguments = json.dumps(args if isinstance(args, dict) else {}, ensure_ascii=False)
+            tool_calls.append(
+                {
+                    "id": str(raw_tool_call.get("call_id") or raw_tool_call.get("id") or f"tool-call-{index + 1}"),
+                    "type": "function",
+                    "function": {
+                        "name": func_name,
+                        "arguments": arguments,
+                    },
+                }
+            )
+        return tool_calls
 
     @staticmethod
     def _to_openai_content(parts: Any) -> Any:
@@ -831,7 +864,7 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
         return {
             "content": message.get("content") or "",
             "reasoning_content": message.get("reasoning_content") or message.get("reasoning") or "",
-            "tool_calls": message.get("tool_calls") or [],
+            "tool_calls": ModelBudgetRouterPlugin._parse_openai_tool_calls(message.get("tool_calls")),
             "usage": {
                 "model_name": candidate.name,
                 "provider_name": candidate.provider_name,
@@ -843,6 +876,61 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
             },
             "raw_data": {"router": {"model": candidate.name, "provider": candidate.provider_name}, "upstream": data},
         }
+
+    @staticmethod
+    def _parse_openai_tool_calls(raw_tool_calls: Any) -> list[dict[str, Any]]:
+        if not isinstance(raw_tool_calls, list):
+            return []
+        tool_calls: list[dict[str, Any]] = []
+        for index, raw_tool_call in enumerate(raw_tool_calls):
+            if not isinstance(raw_tool_call, dict):
+                continue
+
+            if raw_tool_call.get("func_name"):
+                args = raw_tool_call.get("args")
+                if isinstance(args, str):
+                    try:
+                        parsed_args = json.loads(args)
+                    except json.JSONDecodeError:
+                        parsed_args = {}
+                else:
+                    parsed_args = args if isinstance(args, dict) else {}
+                tool_calls.append(
+                    {
+                        "call_id": str(raw_tool_call.get("call_id") or raw_tool_call.get("id") or f"tool-call-{index + 1}"),
+                        "func_name": str(raw_tool_call.get("func_name") or ""),
+                        "args": parsed_args,
+                        "extra_content": raw_tool_call.get("extra_content") if isinstance(raw_tool_call.get("extra_content"), dict) else None,
+                    }
+                )
+                continue
+
+            function = raw_tool_call.get("function")
+            if not isinstance(function, dict):
+                continue
+            func_name = str(function.get("name") or "").strip()
+            if not func_name:
+                continue
+            raw_arguments = function.get("arguments")
+            if isinstance(raw_arguments, dict):
+                args = raw_arguments
+            elif isinstance(raw_arguments, str) and raw_arguments.strip():
+                try:
+                    parsed = json.loads(raw_arguments)
+                    args = parsed if isinstance(parsed, dict) else {}
+                except json.JSONDecodeError:
+                    args = {}
+            else:
+                args = {}
+            tool_calls.append(
+                {
+                    "call_id": str(raw_tool_call.get("id") or f"tool-call-{index + 1}"),
+                    "func_name": func_name,
+                    "args": args,
+                    "extra_content": None,
+                }
+            )
+        return tool_calls
 
     async def _record_success(self, candidate: Candidate, result: dict[str, Any], elapsed: float) -> None:
         async with self._state_lock:
