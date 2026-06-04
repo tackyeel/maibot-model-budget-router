@@ -1,6 +1,6 @@
 [plugin]
 enabled = true
-config_version = "1.9.0"
+config_version = "1.10.0"
 config_path = "/MaiMBot/config/model_config.toml"
 state_path = "data/router_state.json"
 log_detail = true

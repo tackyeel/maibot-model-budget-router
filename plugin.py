@@ -75,7 +75,7 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
         return {
             "plugin": {
                 "enabled": True,
-                "config_version": "1.9.0",
+                "config_version": "1.10.0",
                 "config_path": "/MaiMBot/config/model_config.toml",
                 "state_path": "data/router_state.json",
                 "log_detail": True,
@@ -159,7 +159,7 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
 
         plugin = normalized.setdefault("plugin", {})
         if isinstance(plugin, dict):
-            plugin["config_version"] = "1.9.0"
+            plugin["config_version"] = "1.10.0"
             plugin.setdefault("auto_sync_providers", True)
             if legacy_auto_switch is not None:
                 plugin["auto_switch_api_key_on_quota"] = legacy_auto_switch
@@ -248,6 +248,8 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
         if bool(self._cfg("plugin", "auto_sync_providers", default=True)):
             self._sync_providers_from_model_config(save=True)
         config = self._config if isinstance(self._config, dict) and self._config else self.get_default_config()
+        plugin_config = config.get("plugin") if isinstance(config.get("plugin"), dict) else {}
+        providers_config = config.get("providers") if isinstance(config.get("providers"), dict) else {}
         provider_overrides = self._provider_overrides_for_schema(config)
 
         sections: dict[str, Any] = {
@@ -259,14 +261,14 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
                 "collapsed": False,
                 "order": 0,
                 "fields": {
-                    "enabled": self._schema_field("enabled", "boolean", True, "启用插件", "是否启用模型预算分配器", "switch", 0),
+                    "enabled": self._schema_field("enabled", "boolean", self._as_bool(plugin_config.get("enabled", True), default=True), "启用插件", "是否启用模型预算分配器", "switch", 0),
                     "config_version": self._schema_field(
-                        "config_version", "string", "1.9.0", "配置版本", "配置文件版本，请勿手动修改。", "text", 1, disabled=True
+                        "config_version", "string", str(plugin_config.get("config_version") or "1.10.0"), "配置版本", "配置文件版本，请勿手动修改。", "text", 1, disabled=True
                     ),
                     "config_path": self._schema_field(
                         "config_path",
                         "string",
-                        "/MaiMBot/config/model_config.toml",
+                        str(plugin_config.get("config_path") or "/MaiMBot/config/model_config.toml"),
                         "主模型配置路径",
                         "插件从这里读取真实中转站、API Key 和模型名。",
                         "text",
@@ -275,42 +277,42 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
                     "state_path": self._schema_field(
                         "state_path",
                         "string",
-                        "data/router_state.json",
+                        str(plugin_config.get("state_path") or "data/router_state.json"),
                         "状态文件路径",
                         "记录今日消耗、延迟、失败次数和临时冷却。",
                         "text",
                         3,
                     ),
-                    "log_detail": self._schema_field("log_detail", "boolean", True, "记录详细日志", "输出每次实际选中的模型和站点。", "switch", 4),
+                    "log_detail": self._schema_field("log_detail", "boolean", self._as_bool(plugin_config.get("log_detail", True), default=True), "记录详细日志", "输出每次实际选中的模型和站点。", "switch", 4),
                     "health_penalty_seconds": self._schema_field(
-                        "health_penalty_seconds", "integer", 45, "失败冷却秒数", "模型连续失败后临时降低优先级的秒数。", "slider", 5, min_value=0, max_value=300, step=5
+                        "health_penalty_seconds", "integer", int(float(plugin_config.get("health_penalty_seconds", 45) or 0)), "失败冷却秒数", "模型连续失败后临时降低优先级的秒数。", "slider", 5, min_value=0, max_value=300, step=5
                     ),
                     "max_failover_attempts": self._schema_field(
-                        "max_failover_attempts", "integer", 3, "最多切换次数", "单次请求最多尝试几个候选模型。", "slider", 6, min_value=1, max_value=8, step=1
+                        "max_failover_attempts", "integer", int(float(plugin_config.get("max_failover_attempts", 3) or 3)), "最多切换次数", "单次请求最多尝试几个候选模型。", "slider", 6, min_value=1, max_value=8, step=1
                     ),
                     "latency_weight": self._schema_field(
-                        "latency_weight", "number", 1.0, "延迟权重", "越大越偏向速度快的模型。", "slider", 7, min_value=0, max_value=5, step=0.1
+                        "latency_weight", "number", float(plugin_config.get("latency_weight", 1.0) or 0.0), "延迟权重", "越大越偏向速度快的模型。", "slider", 7, min_value=0, max_value=5, step=0.1
                     ),
                     "cost_weight": self._schema_field(
-                        "cost_weight", "number", 0.35, "价格权重", "越大越偏向便宜模型。", "slider", 8, min_value=0, max_value=5, step=0.05
+                        "cost_weight", "number", float(plugin_config.get("cost_weight", 0.35) or 0.0), "价格权重", "越大越偏向便宜模型。", "slider", 8, min_value=0, max_value=5, step=0.05
                     ),
                     "balance_weight": self._schema_field(
-                        "balance_weight", "number", 0.65, "预算权重", "越大越偏向余额和每日预算充足的站点。", "slider", 9, min_value=0, max_value=5, step=0.05
+                        "balance_weight", "number", float(plugin_config.get("balance_weight", 0.65) or 0.0), "预算权重", "越大越偏向余额和每日预算充足的站点。", "slider", 9, min_value=0, max_value=5, step=0.05
                     ),
                     "auto_sync_providers": self._schema_field(
-                        "auto_sync_providers", "boolean", True, "自动同步中转站", "打开插件配置页或插件启动时，从模型管理配置自动补齐新中转站。", "switch", 10
+                        "auto_sync_providers", "boolean", self._as_bool(plugin_config.get("auto_sync_providers", True), default=True), "自动同步中转站", "打开插件配置页或插件启动时，从模型管理配置自动补齐新中转站。", "switch", 10
                     ),
                     "auto_switch_api_key_on_quota": self._schema_field(
-                        "auto_switch_api_key_on_quota", "boolean", True, "额度错误自动切换 Key", "上游返回 429、403、402、余额不足或额度耗尽时，只关闭当前 API Key，并自动切换同站点的下一个 Key。", "switch", 11
+                        "auto_switch_api_key_on_quota", "boolean", self._as_bool(plugin_config.get("auto_switch_api_key_on_quota", True), default=True), "额度错误自动切换 Key", "上游返回 429、403、402、余额不足或额度耗尽时，只关闭当前 API Key，并自动切换同站点的下一个 Key。", "switch", 11
                     ),
                     "auto_disable_model_when_all_keys_failed": self._schema_field(
-                        "auto_disable_model_when_all_keys_failed", "boolean", False, "所有 Key 失效后关闭模型", "仅当这个中转站所有 API Key 都因额度/限流错误失效时，才自动关闭模型池里的对应模型。默认关闭，避免误关模型。", "switch", 12
+                        "auto_disable_model_when_all_keys_failed", "boolean", self._as_bool(plugin_config.get("auto_disable_model_when_all_keys_failed", False), default=False), "所有 Key 失效后关闭模型", "仅当这个中转站所有 API Key 都因额度/限流错误失效时，才自动关闭模型池里的对应模型。默认关闭，避免误关模型。", "switch", 12
                     ),
                     "auto_disable_on_errors": self._schema_field(
-                        "auto_disable_on_errors", "boolean", True, "普通错误自动关闭模型", "排除 429、403、402、额度不足和超时后，普通模型错误累计达到阈值时，自动关闭模型池里的对应模型。", "switch", 13
+                        "auto_disable_on_errors", "boolean", self._as_bool(plugin_config.get("auto_disable_on_errors", True), default=True), "普通错误自动关闭模型", "排除 429、403、402、额度不足和超时后，普通模型错误累计达到阈值时，自动关闭模型池里的对应模型。", "switch", 13
                     ),
                     "auto_disable_error_threshold": self._schema_field(
-                        "auto_disable_error_threshold", "integer", 3, "普通错误关闭阈值", "普通模型错误累计多少次后关闭模型池里的对应模型。", "slider", 14, min_value=1, max_value=10, step=1
+                        "auto_disable_error_threshold", "integer", int(float(plugin_config.get("auto_disable_error_threshold", 3) or 3)), "普通错误关闭阈值", "普通模型错误累计多少次后关闭模型池里的对应模型。", "slider", 14, min_value=1, max_value=10, step=1
                     ),
                 },
             },
@@ -361,16 +363,16 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
                 "order": 2,
                 "fields": {
                     "default_balance_yuan": self._schema_field(
-                        "default_balance_yuan", "number", 9999.0, "默认余额", "未单独配置站点时使用的余额估算。", "number", 0, min_value=0, step=0.01
+                        "default_balance_yuan", "number", float(providers_config.get("default_balance_yuan", 9999.0) or 0.0), "默认余额", "未单独配置站点时使用的余额估算。", "number", 0, min_value=0, step=0.01
                     ),
                     "default_daily_budget_yuan": self._schema_field(
-                        "default_daily_budget_yuan", "number", 9999.0, "默认每日预算", "未单独配置站点时每天最多允许花多少钱。", "number", 1, min_value=0, step=0.01
+                        "default_daily_budget_yuan", "number", float(providers_config.get("default_daily_budget_yuan", 9999.0) or 0.0), "默认每日预算", "未单独配置站点时每天最多允许花多少钱。", "number", 1, min_value=0, step=0.01
                     ),
                     "default_token_balance": self._schema_field(
-                        "default_token_balance", "integer", 0, "默认 Token 额度", "Token 额度模式下，未单独配置站点时默认还有多少 token；填 0 会跳过。", "number", 2, min_value=0, step=1000
+                        "default_token_balance", "integer", int(float(providers_config.get("default_token_balance", 0) or 0)), "默认 Token 额度", "Token 额度模式下，未单独配置站点时默认还有多少 token；填 0 会跳过。", "number", 2, min_value=0, step=1000
                     ),
                     "default_daily_token_budget": self._schema_field(
-                        "default_daily_token_budget", "integer", 0, "默认每日 Token 预算", "Token 额度模式下，未单独配置站点时每天最多允许消耗多少 token；填 0 表示不限制每日预算。", "number", 3, min_value=0, step=1000
+                        "default_daily_token_budget", "integer", int(float(providers_config.get("default_daily_token_budget", 0) or 0)), "默认每日 Token 预算", "Token 额度模式下，未单独配置站点时每天最多允许消耗多少 token；填 0 表示不限制每日预算。", "number", 3, min_value=0, step=1000
                     ),
                 },
             },
@@ -378,6 +380,8 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
 
         provider_section_names: list[str] = []
         for index, provider_name in enumerate(provider_overrides):
+            provider_config = provider_overrides.get(provider_name)
+            provider_config = provider_config if isinstance(provider_config, dict) else {}
             section_name = f"providers.overrides.{provider_name}"
             provider_section_names.append(section_name)
             sections[section_name] = {
@@ -388,30 +392,30 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
                 "collapsed": index >= 3,
                 "order": 10 + index,
                 "fields": {
-                    "enabled": self._schema_field("enabled", "boolean", True, "启用站点", "是否允许分配请求到这个中转站。", "switch", 0),
+                    "enabled": self._schema_field("enabled", "boolean", self._as_bool(provider_config.get("enabled", True), default=True), "启用站点", "是否允许分配请求到这个中转站。", "switch", 0),
                     "api_keys": self._schema_string_list_field(
-                        "api_keys", [], "备用 API Keys", "可填多个备用 API Key；主 Key 仍来自模型管理。某个 Key 没额度时会自动切到下一个。", 1
+                        "api_keys", list(provider_config.get("api_keys") or []), "备用 API Keys", "可填多个备用 API Key；主 Key 仍来自模型管理。某个 Key 没额度时会自动切到下一个。", 1
                     ),
                     "api_key_budget_overrides": self._schema_api_key_budget_list_field(
                         "api_key_budget_overrides",
-                        [],
+                        list(provider_config.get("api_key_budget_overrides") or []),
                         "API Key 预算覆盖",
                         "按 Key 序号单独设置余额：0 是主 Key，1 是第 1 个备用 Key，2 是第 2 个备用 Key；不填则继承站点余额。",
                         2,
                     ),
                     "balance_yuan": self._schema_field(
-                        "balance_yuan", "number", 9999.0, "站点余额", "这个中转站当前大概还剩多少钱；填 0 会跳过。", "number", 3, min_value=0, step=0.01
+                        "balance_yuan", "number", float(provider_config.get("balance_yuan", 9999.0) or 0.0), "站点余额", "这个中转站当前大概还剩多少钱；填 0 会跳过。", "number", 3, min_value=0, step=0.01
                     ),
                     "daily_budget_yuan": self._schema_field(
-                        "daily_budget_yuan", "number", 9999.0, "每日预算", "这个中转站每天最多允许花多少钱；填 0 表示不限制每日预算。", "number", 4, min_value=0, step=0.01
+                        "daily_budget_yuan", "number", float(provider_config.get("daily_budget_yuan", 9999.0) or 0.0), "每日预算", "这个中转站每天最多允许花多少钱；填 0 表示不限制每日预算。", "number", 4, min_value=0, step=0.01
                     ),
                     "weight": self._schema_field(
-                        "weight", "number", 1.0, "优先级权重", "稳定又便宜的站点建议 1.0，不稳定或想少用的站点建议 0.2 到 0.6。", "slider", 5, min_value=0, max_value=5, step=0.1
+                        "weight", "number", float(provider_config.get("weight", 1.0) or 0.0), "优先级权重", "稳定又便宜的站点建议 1.0，不稳定或想少用的站点建议 0.2 到 0.6。", "slider", 5, min_value=0, max_value=5, step=0.1
                     ),
                     "currency": self._schema_field(
                         "currency",
                         "string",
-                        "CNY",
+                        str(provider_config.get("currency") or "CNY"),
                         "计价币种",
                         "这个中转站后台余额和价格使用的币种。选美元后，余额、每次调用价格、模型管理里的输入/输出/缓存价格都会按汇率换算成人民币。",
                         "select",
@@ -421,7 +425,7 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
                     "usd_to_cny_rate": self._schema_field(
                         "usd_to_cny_rate",
                         "number",
-                        7.2,
+                        float(provider_config.get("usd_to_cny_rate", 7.2) or 7.2),
                         "美元兑人民币汇率",
                         "计价币种选 USD 时使用。例如 1 美元约等于 7.2 元人民币就填 7.2。",
                         "number",
@@ -434,7 +438,7 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
                     "billing_mode": self._schema_field(
                         "billing_mode",
                         "string",
-                        "按模型价格",
+                        str(provider_config.get("billing_mode") or "按模型价格"),
                         "计费方式",
                         "按模型价格=使用模型管理里的输入、补全、缓存读取、缓存创建价格；按次扣费=每次成功调用固定扣钱；Token 额度=按站点剩余 token 数扣额度。",
                         "select",
@@ -444,7 +448,7 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
                     "price_per_call_yuan": self._schema_field(
                         "price_per_call_yuan",
                         "number",
-                        0.0,
+                        float(provider_config.get("price_per_call_yuan", 0.0) or 0.0),
                         "每次调用价格",
                         "计费方式选“按次扣费”时使用。例如一次 0.2 元就填 0.2。",
                         "number",
@@ -457,7 +461,7 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
                     "token_balance": self._schema_field(
                         "token_balance",
                         "integer",
-                        0,
+                        int(float(provider_config.get("token_balance", 0) or 0)),
                         "Token 余额",
                         "计费方式选“Token 额度”时使用，表示这个站点当前还剩多少 token；填 0 会跳过。",
                         "number",
@@ -470,7 +474,7 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
                     "daily_token_budget": self._schema_field(
                         "daily_token_budget",
                         "integer",
-                        0,
+                        int(float(provider_config.get("daily_token_budget", 0) or 0)),
                         "每日 Token 预算",
                         "计费方式选“Token 额度”时使用，表示这个站点每天最多允许消耗多少 token；填 0 表示不限制每日预算。",
                         "number",
@@ -482,7 +486,7 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
                     ),
                     "model_billing_overrides": self._schema_model_billing_list_field(
                         "model_billing_overrides",
-                        [],
+                        list(provider_config.get("model_billing_overrides") or []),
                         "模型计费覆盖",
                         "同一个中转站里有些模型按次、有些模型按量时，在这里按模型名称单独覆盖计费方式；不填则继承上面的站点计费方式。",
                         12,
@@ -494,7 +498,7 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
             "plugin_id": plugin_id or "local.model-budget-router-cn",
             "plugin_info": {
                 "name": "模型预算分配器",
-                "version": plugin_version or "1.0.9",
+                "version": plugin_version or "1.0.10",
                 "description": "按任务、余额、预算、延迟和失败率自动选择中转站与模型。",
                 "author": plugin_author,
             },
@@ -519,7 +523,7 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
         CLIENT_TYPE,
         name="模型预算分配器",
         description="按余额、预算、延迟、失败率路由 OpenAI 兼容模型请求",
-        version="1.0.9",
+        version="1.0.10",
     )
     async def budget_router_provider(self, operation: str, request: dict[str, Any]) -> dict[str, Any]:
         if operation != "response":
