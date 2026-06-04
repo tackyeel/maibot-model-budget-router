@@ -75,7 +75,7 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
         return {
             "plugin": {
                 "enabled": True,
-                "config_version": "1.6.0",
+                "config_version": "1.7.0",
                 "config_path": "/MaiMBot/config/model_config.toml",
                 "state_path": "data/router_state.json",
                 "log_detail": True,
@@ -155,7 +155,7 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
 
         plugin = normalized.setdefault("plugin", {})
         if isinstance(plugin, dict):
-            plugin["config_version"] = "1.6.0"
+            plugin["config_version"] = "1.7.0"
             plugin.setdefault("auto_sync_providers", True)
             if legacy_auto_switch is not None:
                 plugin["auto_switch_api_key_on_quota"] = legacy_auto_switch
@@ -188,6 +188,7 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
                         "weight": 1.0,
                         "billing_mode": "按模型价格",
                         "api_keys": [],
+                        "model_billing_overrides": [],
                         "price_per_call_yuan": 0.0,
                         "token_balance": int(providers.get("default_token_balance", 0) or 0),
                         "daily_token_budget": int(providers.get("default_daily_token_budget", 0) or 0),
@@ -213,6 +214,9 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
                     elif not isinstance(base.get("api_keys"), list):
                         base["api_keys"] = []
                     base["api_keys"] = [str(item).strip() for item in base["api_keys"] if str(item).strip()]
+                    base["model_billing_overrides"] = self._normalize_model_billing_overrides(
+                        base.get("model_billing_overrides")
+                    )
                     overrides[provider_name] = base
 
         return normalized, normalized != current
@@ -245,7 +249,7 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
                 "fields": {
                     "enabled": self._schema_field("enabled", "boolean", True, "启用插件", "是否启用模型预算分配器", "switch", 0),
                     "config_version": self._schema_field(
-                        "config_version", "string", "1.6.0", "配置版本", "配置文件版本，请勿手动修改。", "text", 1, disabled=True
+                        "config_version", "string", "1.7.0", "配置版本", "配置文件版本，请勿手动修改。", "text", 1, disabled=True
                     ),
                     "config_path": self._schema_field(
                         "config_path",
@@ -434,6 +438,13 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
                         depends_on="billing_mode",
                         depends_value="Token 额度",
                     ),
+                    "model_billing_overrides": self._schema_model_billing_list_field(
+                        "model_billing_overrides",
+                        [],
+                        "模型计费覆盖",
+                        "同一个中转站里有些模型按次、有些模型按量时，在这里按模型名称单独覆盖计费方式；不填则继承上面的站点计费方式。",
+                        9,
+                    ),
                 },
             }
 
@@ -441,7 +452,7 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
             "plugin_id": plugin_id or "local.model-budget-router-cn",
             "plugin_info": {
                 "name": "模型预算分配器",
-                "version": plugin_version or "1.0.6",
+                "version": plugin_version or "1.0.7",
                 "description": "按任务、余额、预算、延迟和失败率自动选择中转站与模型。",
                 "author": plugin_author,
             },
@@ -466,7 +477,7 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
         CLIENT_TYPE,
         name="模型预算分配器",
         description="按余额、预算、延迟、失败率路由 OpenAI 兼容模型请求",
-        version="1.0.6",
+        version="1.0.7",
     )
     async def budget_router_provider(self, operation: str, request: dict[str, Any]) -> dict[str, Any]:
         if operation != "response":
@@ -688,11 +699,11 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
             provider = provider_by_name.get(provider_name)
             if not self._provider_enabled(provider_name) or not isinstance(provider, dict):
                 continue
-            if not self._provider_has_budget(provider_name):
-                continue
             api_keys = self._provider_api_keys(provider_name, provider)
             for api_key_info in api_keys:
                 candidate = self._make_candidate(name, model, provider_name, provider, api_key_info)
+                if not self._candidate_has_budget(candidate):
+                    continue
                 if self._candidate_auto_disabled(name, provider_name) or self._api_key_auto_disabled(provider_name, candidate.api_key_id):
                     disabled_candidates.append(candidate)
                     continue
@@ -825,7 +836,7 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
         balance_weight = float(self._cfg("plugin", "balance_weight", default=0.65))
         cost_score = 1.0 / (1.0 + self._candidate_cost_for_score(candidate))
         latency_score = 1.0 / (1.0 + avg_latency)
-        balance_score = self._provider_budget_ratio(candidate.provider_name)
+        balance_score = self._candidate_budget_ratio(candidate)
         failure_score = 1.0 / (1.0 + failures * 2.0)
         return provider_weight * failure_score * (
             latency_score * latency_weight + cost_score * cost_weight + balance_score * balance_weight
@@ -1088,8 +1099,11 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
             token_count = charge["tokens"]
             provider["spent_yuan_today"] = float(provider.get("spent_yuan_today") or 0.0) + money_yuan
             provider["spent_tokens_today"] = int(provider.get("spent_tokens_today") or 0) + token_count
-            if self._provider_billing_mode(candidate.provider_name) == "token_quota":
-                provider["estimated_token_balance"] = max(0, self._provider_token_balance(candidate.provider_name) - token_count)
+            if self._candidate_billing_mode(candidate) == "token_quota":
+                target_state = self._candidate_billing_state(candidate)
+                if target_state is not provider:
+                    target_state["spent_tokens_today"] = int(target_state.get("spent_tokens_today") or 0) + token_count
+                target_state["estimated_token_balance"] = max(0, self._candidate_token_balance(candidate) - token_count)
             else:
                 provider["estimated_balance_yuan"] = max(0.0, self._provider_balance(candidate.provider_name) - money_yuan)
         await self._save_state()
@@ -1178,13 +1192,13 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
         target["last_seen_at"] = int(time.time())
 
     def _estimate_charge(self, candidate: Candidate, usage: dict[str, Any]) -> dict[str, Any]:
-        override = self._provider_override(candidate.provider_name)
-        billing_mode = self._provider_billing_mode(candidate.provider_name)
+        billing = self._candidate_billing_settings(candidate)
+        billing_mode = str(billing.get("billing_mode") or "model_price")
         total_tokens = self._usage_total_tokens(usage)
         if billing_mode == "token_quota":
             return {"money_yuan": 0.0, "tokens": total_tokens}
         if billing_mode == "per_call":
-            return {"money_yuan": max(0.0, float(override.get("price_per_call_yuan") or 0.0)), "tokens": 0}
+            return {"money_yuan": max(0.0, float(billing.get("price_per_call_yuan") or 0.0)), "tokens": 0}
 
         return {"money_yuan": self._estimate_model_price_cost(candidate, usage), "tokens": 0}
 
@@ -1247,6 +1261,38 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
     def _provider_billing_mode(self, provider_name: str) -> str:
         return self._provider_billing_mode_from_value(self._provider_override(provider_name).get("billing_mode"))
 
+    def _candidate_billing_mode(self, candidate: Candidate) -> str:
+        return str(self._candidate_billing_settings(candidate).get("billing_mode") or "model_price")
+
+    def _candidate_billing_settings(self, candidate: Candidate) -> dict[str, Any]:
+        provider_override = self._provider_override(candidate.provider_name)
+        model_override = self._model_billing_override(candidate.provider_name, candidate.name)
+        mode_value = model_override.get("billing_mode") if model_override else None
+        billing_mode = self._provider_billing_mode_from_value(mode_value) if mode_value else self._provider_billing_mode(candidate.provider_name)
+        price_source = model_override if model_override and "price_per_call_yuan" in model_override else provider_override
+        token_source = model_override if model_override and "token_balance" in model_override else provider_override
+        daily_token_source = model_override if model_override and "daily_token_budget" in model_override else provider_override
+        return {
+            "billing_mode": billing_mode,
+            "is_model_override": bool(model_override),
+            "price_per_call_yuan": float(price_source.get("price_per_call_yuan") or 0.0),
+            "token_balance": int(float(token_source.get("token_balance", 0) or 0)),
+            "daily_token_budget": int(float(daily_token_source.get("daily_token_budget", 0) or 0)),
+        }
+
+    def _model_billing_override(self, provider_name: str, model_name: str) -> dict[str, Any]:
+        overrides = self._provider_override(provider_name).get("model_billing_overrides")
+        if not isinstance(overrides, list):
+            return {}
+        target = str(model_name or "").strip()
+        for item in overrides:
+            if not isinstance(item, dict):
+                continue
+            item_name = str(item.get("model_name") or item.get("name") or item.get("model") or "").strip()
+            if item_name == target:
+                return item
+        return {}
+
     @classmethod
     def _provider_billing_mode_label_from_value(cls, value: Any) -> str:
         labels = {
@@ -1283,10 +1329,10 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
         return aliases.get(raw_mode, "model_price")
 
     def _candidate_cost_for_score(self, candidate: Candidate) -> float:
-        override = self._provider_override(candidate.provider_name)
-        billing_mode = self._provider_billing_mode(candidate.provider_name)
+        billing = self._candidate_billing_settings(candidate)
+        billing_mode = str(billing.get("billing_mode") or "model_price")
         if billing_mode == "per_call":
-            return max(0.0, float(override.get("price_per_call_yuan") or 0.0)) * 10.0
+            return max(0.0, float(billing.get("price_per_call_yuan") or 0.0)) * 10.0
         if billing_mode == "token_quota":
             return 0.0
         cache_read_price = candidate.cache_read_price_in if candidate.cache_read_price_in > 0 else candidate.price_in
@@ -1323,30 +1369,55 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
         providers = self._config.get("providers") if isinstance(self._config.get("providers"), dict) else {}
         return int(float(override.get("daily_token_budget", providers.get("default_daily_token_budget", 0)) or 0))
 
-    def _provider_has_budget(self, provider_name: str) -> bool:
-        if self._provider_billing_mode(provider_name) == "token_quota":
-            balance = self._provider_token_balance(provider_name)
-            daily_budget = self._provider_daily_token_budget(provider_name)
-            spent = int(self._provider_state(provider_name).get("spent_tokens_today") or 0)
+    def _candidate_token_balance(self, candidate: Candidate) -> int:
+        billing = self._candidate_billing_settings(candidate)
+        state_balance = self._candidate_billing_state(candidate).get("estimated_token_balance")
+        if state_balance is not None:
+            return int(float(state_balance))
+        if billing.get("is_model_override"):
+            return int(float(billing.get("token_balance") or 0))
+        return self._provider_token_balance(candidate.provider_name)
+
+    def _candidate_daily_token_budget(self, candidate: Candidate) -> int:
+        billing = self._candidate_billing_settings(candidate)
+        if billing.get("is_model_override"):
+            return int(float(billing.get("daily_token_budget") or 0))
+        return self._provider_daily_token_budget(candidate.provider_name)
+
+    def _candidate_billing_state(self, candidate: Candidate) -> dict[str, Any]:
+        if self._model_billing_override(candidate.provider_name, candidate.name):
+            provider = self._provider_state(candidate.provider_name)
+            models = provider.setdefault("model_billing", {})
+            if not isinstance(models, dict):
+                models = {}
+                provider["model_billing"] = models
+            return models.setdefault(candidate.name, {})
+        return self._provider_state(candidate.provider_name)
+
+    def _candidate_has_budget(self, candidate: Candidate) -> bool:
+        if self._candidate_billing_mode(candidate) == "token_quota":
+            balance = self._candidate_token_balance(candidate)
+            daily_budget = self._candidate_daily_token_budget(candidate)
+            spent = int(self._candidate_billing_state(candidate).get("spent_tokens_today") or 0)
             return balance > 0 and (daily_budget <= 0 or spent < daily_budget)
-        balance = self._provider_balance(provider_name)
-        daily_budget = self._provider_daily_budget(provider_name)
-        spent = float(self._provider_state(provider_name).get("spent_yuan_today") or 0.0)
+        balance = self._provider_balance(candidate.provider_name)
+        daily_budget = self._provider_daily_budget(candidate.provider_name)
+        spent = float(self._provider_state(candidate.provider_name).get("spent_yuan_today") or 0.0)
         return balance > 0 and (daily_budget <= 0 or spent < daily_budget)
 
-    def _provider_budget_ratio(self, provider_name: str) -> float:
-        if self._provider_billing_mode(provider_name) == "token_quota":
-            balance = self._provider_token_balance(provider_name)
-            daily_budget = self._provider_daily_token_budget(provider_name)
-            spent = int(self._provider_state(provider_name).get("spent_tokens_today") or 0)
+    def _candidate_budget_ratio(self, candidate: Candidate) -> float:
+        if self._candidate_billing_mode(candidate) == "token_quota":
+            balance = self._candidate_token_balance(candidate)
+            daily_budget = self._candidate_daily_token_budget(candidate)
+            spent = int(self._candidate_billing_state(candidate).get("spent_tokens_today") or 0)
             if balance <= 0:
                 return 0.0
             if daily_budget <= 0:
                 return 1.0
             return max(0.0, min(1.0, (daily_budget - spent) / max(daily_budget, 1)))
-        balance = self._provider_balance(provider_name)
-        daily_budget = self._provider_daily_budget(provider_name)
-        spent = float(self._provider_state(provider_name).get("spent_yuan_today") or 0.0)
+        balance = self._provider_balance(candidate.provider_name)
+        daily_budget = self._provider_daily_budget(candidate.provider_name)
+        spent = float(self._provider_state(candidate.provider_name).get("spent_yuan_today") or 0.0)
         if balance <= 0:
             return 0.0
         if daily_budget <= 0:
@@ -1507,6 +1578,37 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
             return {"name": name, "enabled": ModelBudgetRouterPlugin._as_bool(item.get("enabled", True), default=True), **extra}
         return {"name": str(item).strip(), "enabled": True}
 
+    @classmethod
+    def _normalize_model_billing_overrides(cls, value: Any) -> list[dict[str, Any]]:
+        raw_items: list[Any]
+        if isinstance(value, dict):
+            raw_items = [{"model_name": key, **item} if isinstance(item, dict) else {"model_name": key} for key, item in value.items()]
+        elif isinstance(value, list):
+            raw_items = value
+        else:
+            raw_items = []
+
+        normalized: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for item in raw_items:
+            if not isinstance(item, dict):
+                continue
+            model_name = str(item.get("model_name") or item.get("name") or item.get("model") or "").strip()
+            if not model_name or model_name in seen:
+                continue
+            seen.add(model_name)
+            billing_mode = cls._provider_billing_mode_label_from_value(item.get("billing_mode"))
+            normalized.append(
+                {
+                    "model_name": model_name,
+                    "billing_mode": billing_mode,
+                    "price_per_call_yuan": float(item.get("price_per_call_yuan") or 0.0),
+                    "token_balance": int(float(item.get("token_balance") or 0)),
+                    "daily_token_budget": int(float(item.get("daily_token_budget") or 0)),
+                }
+            )
+        return normalized
+
     @staticmethod
     def _as_bool(value: Any, *, default: bool = False) -> bool:
         if isinstance(value, bool):
@@ -1547,6 +1649,11 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
             if isinstance(provider, dict):
                 provider["spent_yuan_today"] = 0.0
                 provider["spent_tokens_today"] = 0
+                model_billing = provider.get("model_billing")
+                if isinstance(model_billing, dict):
+                    for model_state in model_billing.values():
+                        if isinstance(model_state, dict):
+                            model_state["spent_tokens_today"] = 0
 
     @staticmethod
     def _today() -> str:
@@ -1647,6 +1754,66 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
     def _schema_string_list_field(cls, name: str, default: list[str], label: str, hint: str, order: int) -> dict[str, Any]:
         field = cls._schema_field(name, "array", default, label, hint, "list", order)
         field["item_type"] = "string"
+        field["min_items"] = 0
+        field["max_items"] = None
+        return field
+
+    @classmethod
+    def _schema_model_billing_list_field(cls, name: str, default: list[dict[str, Any]], label: str, hint: str, order: int) -> dict[str, Any]:
+        field = cls._schema_field(name, "array", default, label, hint, "list", order)
+        field["item_type"] = "object"
+        field["item_fields"] = {
+            "model_name": cls._schema_field("model_name", "string", "", "模型名称", "模型管理里的真实模型名称。", "text", 0),
+            "billing_mode": cls._schema_field(
+                "billing_mode",
+                "string",
+                "按模型价格",
+                "计费方式",
+                "这个模型在当前中转站的计费方式。",
+                "select",
+                1,
+                choices=["按模型价格", "按次扣费", "Token 额度"],
+            ),
+            "price_per_call_yuan": cls._schema_field(
+                "price_per_call_yuan",
+                "number",
+                0.0,
+                "每次调用价格",
+                "计费方式选“按次扣费”时使用。例如一次 0.2 元就填 0.2。",
+                "number",
+                2,
+                min_value=0,
+                step=0.001,
+                depends_on="billing_mode",
+                depends_value="按次扣费",
+            ),
+            "token_balance": cls._schema_field(
+                "token_balance",
+                "integer",
+                0,
+                "Token 余额",
+                "计费方式选“Token 额度”时使用，表示这个模型在当前站点还剩多少 token。",
+                "number",
+                3,
+                min_value=0,
+                step=1000,
+                depends_on="billing_mode",
+                depends_value="Token 额度",
+            ),
+            "daily_token_budget": cls._schema_field(
+                "daily_token_budget",
+                "integer",
+                0,
+                "每日 Token 预算",
+                "计费方式选“Token 额度”时使用，表示这个模型每天最多允许消耗多少 token；填 0 表示不限制。",
+                "number",
+                4,
+                min_value=0,
+                step=1000,
+                depends_on="billing_mode",
+                depends_value="Token 额度",
+            ),
+        }
         field["min_items"] = 0
         field["max_items"] = None
         return field

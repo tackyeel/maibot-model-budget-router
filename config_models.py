@@ -35,7 +35,7 @@ class PluginSectionConfig(PluginConfigBase):
         json_schema_extra={"label": "启用插件"},
     )
     config_version: str = Field(
-        default="1.6.0",
+        default="1.7.0",
         description="配置文件版本",
         json_schema_extra={"label": "配置版本", "disabled": True},
     )
@@ -200,6 +200,16 @@ class PoolsSectionConfig(PluginConfigBase):
     )
 
 
+class ModelBillingOverrideConfig(PluginConfigBase):
+    """同一中转站内单个模型的计费覆盖。"""
+
+    model_name: str = Field(default="", description="模型管理里的真实模型名称", json_schema_extra={"label": "模型名称"})
+    billing_mode: str = Field(default="按模型价格", description="这个模型在当前中转站的计费方式", json_schema_extra={"label": "计费方式"})
+    price_per_call_yuan: float = Field(default=0.0, ge=0.0, description="按次扣费时，每次成功调用固定扣多少钱", json_schema_extra={"label": "每次调用价格"})
+    token_balance: int = Field(default=0, ge=0, description="Token 额度模式下，这个模型当前还剩多少 token", json_schema_extra={"label": "Token 余额"})
+    daily_token_budget: int = Field(default=0, ge=0, description="Token 额度模式下，这个模型每天最多允许消耗多少 token；填 0 表示不限制", json_schema_extra={"label": "每日 Token 预算"})
+
+
 class ProviderOverrideConfig(PluginConfigBase):
     """单个中转站预算配置。"""
 
@@ -212,6 +222,11 @@ class ProviderOverrideConfig(PluginConfigBase):
     price_per_call_yuan: float = Field(default=0.0, ge=0.0, description="按次扣费时，每次成功调用固定扣多少钱", json_schema_extra={"label": "每次调用价格"})
     token_balance: int = Field(default=0, ge=0, description="Token 额度模式下，这个站点当前还剩多少 token", json_schema_extra={"label": "Token 余额"})
     daily_token_budget: int = Field(default=0, ge=0, description="Token 额度模式下，这个站点每天最多允许消耗多少 token；填 0 表示不限制", json_schema_extra={"label": "每日 Token 预算"})
+    model_billing_overrides: List[ModelBillingOverrideConfig] = Field(
+        default_factory=list,
+        description="同一个中转站里某些模型计费方式不同，在这里按模型名称单独覆盖",
+        json_schema_extra={"label": "模型计费覆盖"},
+    )
 
 
 class ProvidersSectionConfig(PluginConfigBase):

@@ -15,6 +15,7 @@
 - 支持同一中转站配置多个备用 API Key，某个 Key 没额度时自动切换下一个。
 - 支持普通模型错误累计到阈值后自动关闭池内模型，默认 3 次。
 - 支持三种计费方式：按模型价格、按次扣费、Token 额度。
+- 支持同一中转站内按模型单独覆盖计费方式。
 
 ## 安装
 
@@ -104,6 +105,7 @@ planner = [
 - `price_per_call_yuan`：按次扣费时每次调用多少钱。
 - `token_balance`：Token 额度模式下的剩余 token。
 - `daily_token_budget`：每日 token 预算。
+- `model_billing_overrides`：同一站点内按模型名称覆盖计费方式。
 
 计费方式支持：
 
@@ -114,6 +116,33 @@ token_quota   直接按 token 额度扣
 ```
 
 插件不会登录中转站后台查询真实余额，余额和额度是根据你的配置与调用量估算的。
+
+## 单模型计费覆盖
+
+如果同一个中转站里有些模型按次扣费，有些模型按量扣费，可以在对应站点的“模型计费覆盖”里单独配置。
+
+例如这个站点默认使用模型管理里的价格，但 `gpt-5.5` 每次调用固定 0.2 元，`gemini-2.5-flash` 使用 100 万 token 额度：
+
+```toml
+[providers.overrides]
+"示例站点" = {
+  enabled = true,
+  api_keys = [],
+  balance_yuan = 50.0,
+  daily_budget_yuan = 10.0,
+  weight = 1.0,
+  billing_mode = "按模型价格",
+  price_per_call_yuan = 0.0,
+  token_balance = 0,
+  daily_token_budget = 0,
+  model_billing_overrides = [
+    { model_name = "gpt-5.5", billing_mode = "按次扣费", price_per_call_yuan = 0.2, token_balance = 0, daily_token_budget = 0 },
+    { model_name = "gemini-2.5-flash", billing_mode = "Token 额度", price_per_call_yuan = 0.0, token_balance = 1000000, daily_token_budget = 0 },
+  ],
+}
+```
+
+没有写进 `model_billing_overrides` 的模型，会继续继承这个中转站上面的默认计费方式。
 
 ## 自动切换 API Key
 
