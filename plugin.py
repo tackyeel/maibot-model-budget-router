@@ -75,7 +75,7 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
         return {
             "plugin": {
                 "enabled": True,
-                "config_version": "1.5.0",
+                "config_version": "1.6.0",
                 "config_path": "/MaiMBot/config/model_config.toml",
                 "state_path": "data/router_state.json",
                 "log_detail": True,
@@ -85,7 +85,8 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
                 "cost_weight": 0.35,
                 "balance_weight": 0.65,
                 "auto_sync_providers": True,
-                "auto_disable_on_429": True,
+                "auto_switch_api_key_on_quota": True,
+                "auto_disable_model_when_all_keys_failed": False,
                 "auto_disable_on_errors": True,
                 "auto_disable_error_threshold": 3,
             },
@@ -142,13 +143,26 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
     def normalize_plugin_config(self, config_data: dict[str, Any] | None) -> tuple[dict[str, Any], bool]:
         default_config = self.get_default_config()
         current = config_data if isinstance(config_data, dict) else {}
+        current_plugin = current.get("plugin") if isinstance(current.get("plugin"), dict) else {}
+        legacy_auto_switch: bool | None = None
+        if (
+            isinstance(current_plugin, dict)
+            and "auto_switch_api_key_on_quota" not in current_plugin
+            and "auto_disable_on_429" in current_plugin
+        ):
+            legacy_auto_switch = bool(current_plugin.get("auto_disable_on_429"))
         normalized = self._merge_config_defaults(default_config, current)
 
         plugin = normalized.setdefault("plugin", {})
         if isinstance(plugin, dict):
-            plugin["config_version"] = "1.5.0"
+            plugin["config_version"] = "1.6.0"
             plugin.setdefault("auto_sync_providers", True)
-            plugin.setdefault("auto_disable_on_429", True)
+            if legacy_auto_switch is not None:
+                plugin["auto_switch_api_key_on_quota"] = legacy_auto_switch
+            else:
+                plugin.setdefault("auto_switch_api_key_on_quota", True)
+            plugin.setdefault("auto_disable_model_when_all_keys_failed", False)
+            plugin.pop("auto_disable_on_429", None)
             plugin.setdefault("auto_disable_on_errors", True)
             plugin.setdefault("auto_disable_error_threshold", 3)
 
@@ -231,7 +245,7 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
                 "fields": {
                     "enabled": self._schema_field("enabled", "boolean", True, "启用插件", "是否启用模型预算分配器", "switch", 0),
                     "config_version": self._schema_field(
-                        "config_version", "string", "1.5.0", "配置版本", "配置文件版本，请勿手动修改。", "text", 1, disabled=True
+                        "config_version", "string", "1.6.0", "配置版本", "配置文件版本，请勿手动修改。", "text", 1, disabled=True
                     ),
                     "config_path": self._schema_field(
                         "config_path",
@@ -270,14 +284,17 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
                     "auto_sync_providers": self._schema_field(
                         "auto_sync_providers", "boolean", True, "自动同步中转站", "打开插件配置页或插件启动时，从模型管理配置自动补齐新中转站。", "switch", 10
                     ),
-                    "auto_disable_on_429": self._schema_field(
-                        "auto_disable_on_429", "boolean", True, "429/403 自动关闭池内模型", "上游返回 429、403、余额不足或额度耗尽时，自动关闭模型池里的对应模型，避免继续命中没额度的模型。", "switch", 11
+                    "auto_switch_api_key_on_quota": self._schema_field(
+                        "auto_switch_api_key_on_quota", "boolean", True, "额度错误自动切换 Key", "上游返回 429、403、402、余额不足或额度耗尽时，只关闭当前 API Key，并自动切换同站点的下一个 Key。", "switch", 11
+                    ),
+                    "auto_disable_model_when_all_keys_failed": self._schema_field(
+                        "auto_disable_model_when_all_keys_failed", "boolean", False, "所有 Key 失效后关闭模型", "仅当这个中转站所有 API Key 都因额度/限流错误失效时，才自动关闭模型池里的对应模型。默认关闭，避免误关模型。", "switch", 12
                     ),
                     "auto_disable_on_errors": self._schema_field(
-                        "auto_disable_on_errors", "boolean", True, "普通错误自动关闭模型", "排除 429、403、额度不足和超时后，普通模型错误累计达到阈值时，自动关闭模型池里的对应模型。", "switch", 12
+                        "auto_disable_on_errors", "boolean", True, "普通错误自动关闭模型", "排除 429、403、402、额度不足和超时后，普通模型错误累计达到阈值时，自动关闭模型池里的对应模型。", "switch", 13
                     ),
                     "auto_disable_error_threshold": self._schema_field(
-                        "auto_disable_error_threshold", "integer", 3, "普通错误关闭阈值", "普通模型错误累计多少次后关闭模型池里的对应模型。", "slider", 13, min_value=1, max_value=10, step=1
+                        "auto_disable_error_threshold", "integer", 3, "普通错误关闭阈值", "普通模型错误累计多少次后关闭模型池里的对应模型。", "slider", 14, min_value=1, max_value=10, step=1
                     ),
                 },
             },
@@ -424,7 +441,7 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
             "plugin_id": plugin_id or "local.model-budget-router-cn",
             "plugin_info": {
                 "name": "模型预算分配器",
-                "version": plugin_version or "1.0.5",
+                "version": plugin_version or "1.0.6",
                 "description": "按任务、余额、预算、延迟和失败率自动选择中转站与模型。",
                 "author": plugin_author,
             },
@@ -449,7 +466,7 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
         CLIENT_TYPE,
         name="模型预算分配器",
         description="按余额、预算、延迟、失败率路由 OpenAI 兼容模型请求",
-        version="1.0.5",
+        version="1.0.6",
     )
     async def budget_router_provider(self, operation: str, request: dict[str, Any]) -> dict[str, Any]:
         if operation != "response":
@@ -550,7 +567,8 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
         for key in (
             "enabled", "config_version", "config_path", "state_path", "log_detail",
             "health_penalty_seconds", "max_failover_attempts", "latency_weight", "cost_weight",
-            "balance_weight", "auto_sync_providers", "auto_disable_on_429",
+            "balance_weight", "auto_sync_providers", "auto_switch_api_key_on_quota",
+            "auto_disable_model_when_all_keys_failed",
             "auto_disable_on_errors", "auto_disable_error_threshold",
         ):
             if key in plugin:
@@ -1094,25 +1112,42 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
             provider["last_error"] = error[-300:]
             model["last_error"] = error[-300:]
             api_key_state["last_error"] = error[-300:]
-            if bool(self._cfg("plugin", "auto_disable_on_429", default=True)) and self._is_quota_or_429_error(error):
+            if bool(self._cfg("plugin", "auto_switch_api_key_on_quota", default=True)) and self._is_quota_or_429_error(error):
                 self._mark_api_key_auto_disabled_locked(candidate, error, disable_type="quota_or_429_403")
                 if self._has_available_api_key_locked(candidate.provider_name, exclude_key_id=candidate.api_key_id):
                     self.ctx.logger.warning(
-                        "API Key 已因 429/403/额度错误自动关闭，将切换备用 Key: model=%s provider=%s key=%s reason=%s",
+                        "API Key 已因 429/403/402/额度错误自动关闭，将切换备用 Key: model=%s provider=%s key=%s reason=%s",
                         candidate.name,
                         candidate.provider_name,
                         candidate.api_key_id,
                         error[-180:],
                     )
                 else:
-                    self._mark_candidate_auto_disabled_locked(candidate, error, disable_type="quota_or_429_403")
-                    self._disable_model_in_pools(candidate.name, error, disable_type="quota_or_429_403")
-                    self.ctx.logger.warning(
-                        "模型池模型已因所有 API Key 额度错误自动关闭: model=%s provider=%s reason=%s",
-                        candidate.name,
-                        candidate.provider_name,
-                        error[-180:],
-                    )
+                    if bool(self._cfg("plugin", "auto_disable_model_when_all_keys_failed", default=False)):
+                        self._mark_candidate_auto_disabled_locked(candidate, error, disable_type="all_api_keys_quota_failed")
+                        disabled = self._disable_model_in_pools(candidate.name, error, disable_type="all_api_keys_quota_failed")
+                        if disabled:
+                            self.ctx.logger.warning(
+                                "模型池模型已因所有 API Key 额度错误自动关闭: model=%s provider=%s reason=%s",
+                                candidate.name,
+                                candidate.provider_name,
+                                error[-180:],
+                            )
+                        else:
+                            self.ctx.logger.warning(
+                                "所有 API Key 都因额度错误不可用，但该模型是模型池最后候选，已保留模型池开关: model=%s provider=%s reason=%s",
+                                candidate.name,
+                                candidate.provider_name,
+                                error[-180:],
+                            )
+                    else:
+                        self.ctx.logger.warning(
+                            "API Key 已因 429/403/402/额度错误自动关闭；当前站点暂无备用 Key，但未关闭模型池模型: model=%s provider=%s key=%s reason=%s",
+                            candidate.name,
+                            candidate.provider_name,
+                            candidate.api_key_id,
+                            error[-180:],
+                        )
             elif self._should_count_general_error(error):
                 general_errors = int(model.get("general_error_count") or 0) + 1
                 model["general_error_count"] = general_errors
@@ -1319,19 +1354,32 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
         return max(0.0, min(1.0, (daily_budget - spent) / max(daily_budget, 0.001)))
 
     def _candidate_auto_disabled(self, model_name: str, provider_name: str) -> bool:
-        if not (
-            bool(self._cfg("plugin", "auto_disable_on_429", default=True))
-            or bool(self._cfg("plugin", "auto_disable_on_errors", default=True))
-        ):
-            return False
         provider_disabled = self._provider_state(provider_name).get("auto_disabled_models")
-        if isinstance(provider_disabled, dict) and provider_disabled.get(model_name):
+        if isinstance(provider_disabled, dict) and self._model_auto_disabled_enabled(provider_disabled.get(model_name)):
             return True
         model_disabled = self._model_state(model_name).get("auto_disabled_providers")
-        return isinstance(model_disabled, dict) and bool(model_disabled.get(provider_name))
+        return isinstance(model_disabled, dict) and self._model_auto_disabled_enabled(model_disabled.get(provider_name))
+
+    def _model_auto_disabled_enabled(self, payload: Any) -> bool:
+        if not payload:
+            return False
+        if not isinstance(payload, dict):
+            return bool(
+                self._cfg("plugin", "auto_disable_model_when_all_keys_failed", default=False)
+                or self._cfg("plugin", "auto_disable_on_errors", default=True)
+            )
+        disable_type = str(payload.get("type") or "")
+        if disable_type in {"quota_or_429_403", "all_api_keys_quota_failed"}:
+            return bool(self._cfg("plugin", "auto_disable_model_when_all_keys_failed", default=False))
+        if disable_type == "general_error":
+            return bool(self._cfg("plugin", "auto_disable_on_errors", default=True))
+        return bool(
+            self._cfg("plugin", "auto_disable_model_when_all_keys_failed", default=False)
+            or self._cfg("plugin", "auto_disable_on_errors", default=True)
+        )
 
     def _api_key_auto_disabled(self, provider_name: str, api_key_id: str) -> bool:
-        if not bool(self._cfg("plugin", "auto_disable_on_429", default=True)):
+        if not bool(self._cfg("plugin", "auto_switch_api_key_on_quota", default=True)):
             return False
         disabled = self._provider_state(provider_name).get("auto_disabled_api_keys")
         return isinstance(disabled, dict) and bool(disabled.get(api_key_id))

@@ -1,6 +1,6 @@
 [plugin]
 enabled = true
-config_version = "1.5.0"
+config_version = "1.6.0"
 config_path = "/MaiMBot/config/model_config.toml"
 state_path = "data/router_state.json"
 log_detail = true
@@ -10,21 +10,13 @@ latency_weight = 1.0
 cost_weight = 0.35
 balance_weight = 0.65
 auto_sync_providers = true
-auto_disable_on_429 = true
+auto_switch_api_key_on_quota = true
+auto_disable_model_when_all_keys_failed = false
 auto_disable_on_errors = true
 auto_disable_error_threshold = 3
 
 [pools]
-default = [{ name = "gemini-2.5-flash", enabled = true }, { name = "deepseek-v3", enabled = true }]
-timing_gate = [{ name = "gemini-2.5-flash", enabled = true }]
-planner = [{ name = "gemini-2.5-flash", enabled = true }, { name = "deepseek-v3", enabled = true }]
-memory = [{ name = "gemini-2.5-flash", enabled = true }, { name = "deepseek-v3", enabled = true }]
-mid_memory = [{ name = "gemini-2.5-flash", enabled = true }, { name = "deepseek-v3", enabled = true }]
-replyer = [{ name = "deepseek-v3", enabled = true }, { name = "gemini-2.5-flash", enabled = true }]
-utils = [{ name = "gemini-2.5-flash", enabled = true }, { name = "deepseek-v3", enabled = true }]
-learner = [{ name = "gemini-2.5-flash", enabled = true }, { name = "deepseek-v3", enabled = true }]
-emoji = [{ name = "gemini-2.5-flash", enabled = true }]
-vlm = [{ name = "gemini-2.5-flash", enabled = true }]
+default = [{ name = "m1", enabled = false, disabled_reason = "HTTP 500 upstream broken", disabled_type = "general_error", disabled_at = 1780546666 }, { name = "m2", enabled = true }]
 
 [providers]
 default_balance_yuan = 9999.0
@@ -33,5 +25,4 @@ default_token_balance = 0
 default_daily_token_budget = 0
 
 [providers.overrides]
-# Relay providers are auto-synced from MaiBot model_config.toml when
-# auto_sync_providers is enabled. You can edit them in WebUI after install.
+p1 = { enabled = true, api_keys = [], balance_yuan = 1, daily_budget_yuan = 1, weight = 1, billing_mode = "?????", price_per_call_yuan = 0, token_balance = 0, daily_token_budget = 0 }

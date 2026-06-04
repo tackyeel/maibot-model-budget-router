@@ -35,7 +35,7 @@ class PluginSectionConfig(PluginConfigBase):
         json_schema_extra={"label": "启用插件"},
     )
     config_version: str = Field(
-        default="1.5.0",
+        default="1.6.0",
         description="配置文件版本",
         json_schema_extra={"label": "配置版本", "disabled": True},
     )
@@ -94,14 +94,19 @@ class PluginSectionConfig(PluginConfigBase):
         description="打开插件配置页或插件启动时，从模型管理配置自动补齐新中转站",
         json_schema_extra={"label": "自动同步中转站"},
     )
-    auto_disable_on_429: bool = Field(
+    auto_switch_api_key_on_quota: bool = Field(
         default=True,
-        description="上游返回 429、403、余额不足或额度耗尽时，自动关闭模型池里的对应模型",
-        json_schema_extra={"label": "429/403 自动关闭池内模型"},
+        description="上游返回 429、403、402、余额不足或额度耗尽时，只关闭当前 API Key，并自动切换同站点的下一个 Key",
+        json_schema_extra={"label": "额度错误自动切换 Key"},
+    )
+    auto_disable_model_when_all_keys_failed: bool = Field(
+        default=False,
+        description="仅当这个中转站所有 API Key 都因额度/限流错误失效时，才自动关闭模型池里的对应模型",
+        json_schema_extra={"label": "所有 Key 失效后关闭模型"},
     )
     auto_disable_on_errors: bool = Field(
         default=True,
-        description="排除 429、403、额度不足和超时后，普通模型错误累计达到阈值时自动关闭池内模型",
+        description="排除 429、403、402、额度不足和超时后，普通模型错误累计达到阈值时自动关闭池内模型",
         json_schema_extra={"label": "普通错误自动关闭模型"},
     )
     auto_disable_error_threshold: int = Field(
