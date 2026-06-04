@@ -17,8 +17,8 @@ from maibot_sdk import LLMProvider, MaiBotPlugin
 
 CLIENT_TYPE = "budget_router"
 ROUTER_MODEL_PREFIX = "router:"
-PLUGIN_VERSION = "1.1.0"
-CONFIG_VERSION = "1.1.0"
+PLUGIN_VERSION = "1.1.1"
+CONFIG_VERSION = "1.1.1"
 
 
 @dataclass(slots=True)
@@ -238,11 +238,7 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
                         base[numeric_key] = float(base.get(numeric_key) or 0.0)
                     for numeric_key in ("token_balance", "daily_token_budget"):
                         base[numeric_key] = int(float(base.get(numeric_key) or 0))
-                    if isinstance(base.get("api_keys"), str):
-                        base["api_keys"] = [base["api_keys"]]
-                    elif not isinstance(base.get("api_keys"), list):
-                        base["api_keys"] = []
-                    base["api_keys"] = [str(item).strip() for item in base["api_keys"] if str(item).strip()]
+                    base["api_keys"] = self._normalize_api_keys(base.get("api_keys"))
                     base["api_key_budget_overrides"] = self._normalize_api_key_budget_overrides(
                         base.get("api_key_budget_overrides")
                     )
@@ -519,13 +515,18 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
                         "weight", "number", float(provider_config.get("weight", 1.0) or 0.0), "优先级权重", "稳定又便宜的站点建议 1.0，不稳定或想少用的站点建议 0.2 到 0.6。", "slider", 9, min_value=0, max_value=5, step=0.1, group="常用"
                     ),
                     "api_keys": self._schema_string_list_field(
-                        "api_keys", list(provider_config.get("api_keys") or []), "备用 API Keys", "可填多个备用 API Key；主 Key 仍来自模型管理。某个 Key 没额度时会自动切到下一个。", 20, group="高级"
+                        "api_keys",
+                        self._format_api_keys_text(provider_config.get("api_keys")),
+                        "备用 API Keys",
+                        "每行一个备用 API Key；主 Key 仍来自模型管理。某个 Key 没额度时会自动切到下一个。",
+                        20,
+                        group="高级",
                     ),
                     "api_key_budget_overrides": self._schema_api_key_budget_list_field(
                         "api_key_budget_overrides",
-                        list(provider_config.get("api_key_budget_overrides") or []),
+                        self._format_api_key_budget_text(provider_config.get("api_key_budget_overrides")),
                         "API Key 预算覆盖",
-                        "按 Key 序号单独设置余额：0 是主 Key，1 是第 1 个备用 Key，2 是第 2 个备用 Key；不填则继承站点余额。",
+                        "每行一条：Key序号 | 余额 | 每日预算 | Token余额 | 每日Token预算 | 备注。0 是主 Key，1 是第 1 个备用 Key；不填则继承站点余额。",
                         21,
                         group="高级",
                     ),
@@ -1832,6 +1833,19 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
             raw_items = [{"key_index": key, **item} if isinstance(item, dict) else {"key_index": key} for key, item in value.items()]
         elif isinstance(value, list):
             raw_items = value
+        elif isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                raw_items = []
+            elif stripped.startswith("[") or stripped.startswith("{"):
+                try:
+                    parsed = json.loads(stripped)
+                except json.JSONDecodeError:
+                    raw_items = cls._parse_api_key_budget_text(stripped)
+                else:
+                    raw_items = parsed if isinstance(parsed, list) else [parsed]
+            else:
+                raw_items = cls._parse_api_key_budget_text(stripped)
         else:
             raw_items = []
 
@@ -1858,6 +1872,79 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
                 }
             )
         return sorted(normalized, key=lambda item: int(item.get("key_index") or 0))
+
+    @staticmethod
+    def _normalize_api_keys(value: Any) -> list[str]:
+        raw_items: list[Any]
+        if isinstance(value, str):
+            raw_items = value.replace(",", "\n").splitlines()
+        elif isinstance(value, list):
+            raw_items = value
+        else:
+            raw_items = []
+        seen: set[str] = set()
+        normalized: list[str] = []
+        for item in raw_items:
+            text = str(item or "").strip()
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            normalized.append(text)
+        return normalized
+
+    @staticmethod
+    def _parse_api_key_budget_text(value: str) -> list[dict[str, Any]]:
+        items: list[dict[str, Any]] = []
+        for raw_line in value.splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = [part.strip() for part in line.replace("，", ",").replace("|", ",").split(",")]
+            parts = [part for part in parts if part != ""]
+            if not parts:
+                continue
+            try:
+                key_index = int(float(parts[0]))
+            except (TypeError, ValueError):
+                continue
+            item: dict[str, Any] = {"key_index": max(0, key_index)}
+            fields = ("balance_yuan", "daily_budget_yuan", "token_balance", "daily_token_budget")
+            for index, field in enumerate(fields, start=1):
+                if len(parts) <= index:
+                    continue
+                try:
+                    if field.endswith("_yuan"):
+                        item[field] = float(parts[index])
+                    else:
+                        item[field] = int(float(parts[index]))
+                except (TypeError, ValueError):
+                    item[field] = 0.0 if field.endswith("_yuan") else 0
+            if len(parts) >= 6:
+                item["label"] = parts[5]
+            items.append(item)
+        return items
+
+    @classmethod
+    def _format_api_keys_text(cls, value: Any) -> str:
+        return "\n".join(cls._normalize_api_keys(value))
+
+    @classmethod
+    def _format_api_key_budget_text(cls, value: Any) -> str:
+        lines: list[str] = []
+        for item in cls._normalize_api_key_budget_overrides(value):
+            lines.append(
+                " | ".join(
+                    [
+                        str(int(item.get("key_index") or 0)),
+                        str(float(item.get("balance_yuan") or 0.0)),
+                        str(float(item.get("daily_budget_yuan") or 0.0)),
+                        str(int(float(item.get("token_balance") or 0))),
+                        str(int(float(item.get("daily_token_budget") or 0))),
+                        str(item.get("label") or ""),
+                    ]
+                ).rstrip(" |")
+            )
+        return "\n".join(lines)
 
     @staticmethod
     def _as_bool(value: Any, *, default: bool = False) -> bool:
@@ -1961,6 +2048,7 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
         depends_on: str | None = None,
         depends_value: Any = None,
         group: str | None = None,
+        rows: int = 3,
     ) -> dict[str, Any]:
         return {
             "name": name,
@@ -1984,7 +2072,7 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
             "pattern": None,
             "max_length": None,
             "input_type": None,
-            "rows": 3,
+            "rows": rows,
             "group": group,
             "depends_on": depends_on,
             "depends_value": depends_value,
@@ -2008,12 +2096,8 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
         return field
 
     @classmethod
-    def _schema_string_list_field(cls, name: str, default: list[str], label: str, hint: str, order: int, *, group: str | None = None) -> dict[str, Any]:
-        field = cls._schema_field(name, "array", default, label, hint, "list", order, group=group)
-        field["item_type"] = "string"
-        field["min_items"] = 0
-        field["max_items"] = None
-        return field
+    def _schema_string_list_field(cls, name: str, default: str, label: str, hint: str, order: int, *, group: str | None = None) -> dict[str, Any]:
+        return cls._schema_field(name, "string", default, label, hint, "textarea", order, group=group, rows=5)
 
     @classmethod
     def _schema_model_billing_list_field(cls, name: str, default: list[dict[str, Any]], label: str, hint: str, order: int, *, group: str | None = None) -> dict[str, Any]:
@@ -2076,70 +2160,8 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
         return field
 
     @classmethod
-    def _schema_api_key_budget_list_field(cls, name: str, default: list[dict[str, Any]], label: str, hint: str, order: int, *, group: str | None = None) -> dict[str, Any]:
-        field = cls._schema_field(name, "array", default, label, hint, "list", order, group=group)
-        field["item_type"] = "object"
-        field["item_fields"] = {
-            "key_index": cls._schema_field(
-                "key_index",
-                "integer",
-                0,
-                "Key 序号",
-                "0 是主 Key；1 是第 1 个备用 Key；2 是第 2 个备用 Key。",
-                "number",
-                0,
-                min_value=0,
-                step=1,
-            ),
-            "label": cls._schema_field("label", "string", "", "备注", "可填账号名或用途，方便区分。", "text", 1),
-            "balance_yuan": cls._schema_field(
-                "balance_yuan",
-                "number",
-                0.0,
-                "Key 余额",
-                "这个 Key 对应账号当前大概还剩多少钱；填 0 会跳过这个 Key 的人民币计费请求。",
-                "number",
-                2,
-                min_value=0,
-                step=0.01,
-            ),
-            "daily_budget_yuan": cls._schema_field(
-                "daily_budget_yuan",
-                "number",
-                0.0,
-                "Key 每日预算",
-                "这个 Key 每天最多允许花多少钱；填 0 表示不限制每日预算。",
-                "number",
-                3,
-                min_value=0,
-                step=0.01,
-            ),
-            "token_balance": cls._schema_field(
-                "token_balance",
-                "integer",
-                0,
-                "Key Token 余额",
-                "Token 额度计费时，这个 Key 还剩多少 token；填 0 会跳过这个 Key 的 Token 额度请求。",
-                "number",
-                4,
-                min_value=0,
-                step=1000,
-            ),
-            "daily_token_budget": cls._schema_field(
-                "daily_token_budget",
-                "integer",
-                0,
-                "Key 每日 Token 预算",
-                "Token 额度计费时，这个 Key 每天最多允许消耗多少 token；填 0 表示不限制。",
-                "number",
-                5,
-                min_value=0,
-                step=1000,
-            ),
-        }
-        field["min_items"] = 0
-        field["max_items"] = None
-        return field
+    def _schema_api_key_budget_list_field(cls, name: str, default: str, label: str, hint: str, order: int, *, group: str | None = None) -> dict[str, Any]:
+        return cls._schema_field(name, "string", default, label, hint, "textarea", order, group=group, rows=5)
 
     def _log_route(self, task_name: str, candidate: Candidate, elapsed: float, result: dict[str, Any]) -> None:
         if not bool(self._cfg("plugin", "log_detail", default=True)):

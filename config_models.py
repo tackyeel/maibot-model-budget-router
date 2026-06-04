@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Dict, List
+from typing import Any, Dict, List
 
 from maibot_sdk import Field, PluginConfigBase
 
@@ -35,7 +35,7 @@ class PluginSectionConfig(PluginConfigBase):
         json_schema_extra={"label": "启用插件"},
     )
     config_version: str = Field(
-        default="1.1.0",
+        default="1.1.1",
         description="配置文件版本",
         json_schema_extra={"label": "配置版本", "disabled": True},
     )
@@ -230,10 +230,10 @@ class ProviderOverrideConfig(PluginConfigBase):
     """单个中转站预算配置。"""
 
     enabled: bool = Field(default=True, description="是否启用这个中转站", json_schema_extra={"label": "启用站点"})
-    api_keys: List[str] = Field(default_factory=list, description="备用 API Key；主 Key 仍来自模型管理。某个 Key 没额度时会自动切下一个", json_schema_extra={"label": "备用 API Keys"})
-    api_key_budget_overrides: List[ApiKeyBudgetOverrideConfig] = Field(
+    api_keys: Any = Field(default_factory=list, description="备用 API Key；可为列表，也可为每行一个 Key 的文本", json_schema_extra={"label": "备用 API Keys"})
+    api_key_budget_overrides: Any = Field(
         default_factory=list,
-        description="按 API Key 序号单独覆盖余额和每日预算；0 是主 Key，1 是第 1 个备用 Key",
+        description="按 API Key 序号单独覆盖余额和每日预算；可为列表，也可为每行一条的文本",
         json_schema_extra={"label": "API Key 预算覆盖"},
     )
     balance_yuan: float = Field(default=9999.0, ge=0.0, description="这个中转站当前余额估算，填 0 会跳过该站点", json_schema_extra={"label": "站点余额"})

@@ -101,8 +101,8 @@ planner = [
 每个站点可以配置：
 
 - `enabled`：是否启用这个中转站。
-- `api_keys`：备用 API Key 列表；主 Key 仍来自模型管理。
-- `api_key_budget_overrides`：按 Key 序号单独覆盖余额和预算；0 是主 Key，1 是第 1 个备用 Key。
+- `api_keys`：备用 API Key；WebUI 里按“每行一个 Key”填写，主 Key 仍来自模型管理。
+- `api_key_budget_overrides`：按 Key 序号单独覆盖余额和预算；WebUI 里每行一条，格式为 `Key序号 | 余额 | 每日预算 | Token余额 | 每日Token预算 | 备注`。0 是主 Key，1 是第 1 个备用 Key。
 - `balance_yuan`：估算余额。
 - `daily_budget_yuan`：每日预算。
 - `weight`：站点权重，越大越优先。
