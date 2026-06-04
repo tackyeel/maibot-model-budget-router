@@ -75,7 +75,7 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
         return {
             "plugin": {
                 "enabled": True,
-                "config_version": "1.8.0",
+                "config_version": "1.9.0",
                 "config_path": "/MaiMBot/config/model_config.toml",
                 "state_path": "data/router_state.json",
                 "log_detail": True,
@@ -133,6 +133,8 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
             "balance_yuan": balance_yuan,
             "daily_budget_yuan": daily_budget_yuan,
             "weight": weight,
+            "currency": "CNY",
+            "usd_to_cny_rate": 7.2,
             "billing_mode": billing_mode,
             "api_keys": list(api_keys or []),
             "api_key_budget_overrides": [],
@@ -157,7 +159,7 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
 
         plugin = normalized.setdefault("plugin", {})
         if isinstance(plugin, dict):
-            plugin["config_version"] = "1.8.0"
+            plugin["config_version"] = "1.9.0"
             plugin.setdefault("auto_sync_providers", True)
             if legacy_auto_switch is not None:
                 plugin["auto_switch_api_key_on_quota"] = legacy_auto_switch
@@ -188,6 +190,8 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
                         "balance_yuan": float(providers.get("default_balance_yuan", 9999.0) or 0.0),
                         "daily_budget_yuan": float(providers.get("default_daily_budget_yuan", 9999.0) or 0.0),
                         "weight": 1.0,
+                        "currency": "CNY",
+                        "usd_to_cny_rate": 7.2,
                         "billing_mode": "按模型价格",
                         "api_keys": [],
                         "api_key_budget_overrides": [],
@@ -199,6 +203,7 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
                     if isinstance(provider_config, dict):
                         base.update(provider_config)
                     base["billing_mode"] = self._provider_billing_mode_label_from_value(base.get("billing_mode"))
+                    base["currency"] = self._provider_currency_from_value(base.get("currency"))
                     if "token_balance" not in base:
                         legacy_input = float(base.get("price_per_million_input_yuan") or 0.0)
                         legacy_output = float(base.get("price_per_million_output_yuan") or 0.0)
@@ -207,6 +212,7 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
                         "balance_yuan",
                         "daily_budget_yuan",
                         "weight",
+                        "usd_to_cny_rate",
                         "price_per_call_yuan",
                     ):
                         base[numeric_key] = float(base.get(numeric_key) or 0.0)
@@ -255,7 +261,7 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
                 "fields": {
                     "enabled": self._schema_field("enabled", "boolean", True, "启用插件", "是否启用模型预算分配器", "switch", 0),
                     "config_version": self._schema_field(
-                        "config_version", "string", "1.8.0", "配置版本", "配置文件版本，请勿手动修改。", "text", 1, disabled=True
+                        "config_version", "string", "1.9.0", "配置版本", "配置文件版本，请勿手动修改。", "text", 1, disabled=True
                     ),
                     "config_path": self._schema_field(
                         "config_path",
@@ -402,6 +408,29 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
                     "weight": self._schema_field(
                         "weight", "number", 1.0, "优先级权重", "稳定又便宜的站点建议 1.0，不稳定或想少用的站点建议 0.2 到 0.6。", "slider", 5, min_value=0, max_value=5, step=0.1
                     ),
+                    "currency": self._schema_field(
+                        "currency",
+                        "string",
+                        "CNY",
+                        "计价币种",
+                        "这个中转站后台余额和价格使用的币种。选美元后，余额、每次调用价格、模型管理里的输入/输出/缓存价格都会按汇率换算成人民币。",
+                        "select",
+                        6,
+                        choices=["CNY", "USD"],
+                    ),
+                    "usd_to_cny_rate": self._schema_field(
+                        "usd_to_cny_rate",
+                        "number",
+                        7.2,
+                        "美元兑人民币汇率",
+                        "计价币种选 USD 时使用。例如 1 美元约等于 7.2 元人民币就填 7.2。",
+                        "number",
+                        7,
+                        min_value=0.01,
+                        step=0.01,
+                        depends_on="currency",
+                        depends_value="USD",
+                    ),
                     "billing_mode": self._schema_field(
                         "billing_mode",
                         "string",
@@ -409,7 +438,7 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
                         "计费方式",
                         "按模型价格=使用模型管理里的输入、补全、缓存读取、缓存创建价格；按次扣费=每次成功调用固定扣钱；Token 额度=按站点剩余 token 数扣额度。",
                         "select",
-                        6,
+                        8,
                         choices=["按模型价格", "按次扣费", "Token 额度"],
                     ),
                     "price_per_call_yuan": self._schema_field(
@@ -419,7 +448,7 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
                         "每次调用价格",
                         "计费方式选“按次扣费”时使用。例如一次 0.2 元就填 0.2。",
                         "number",
-                        7,
+                        9,
                         min_value=0,
                         step=0.001,
                         depends_on="billing_mode",
@@ -432,7 +461,7 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
                         "Token 余额",
                         "计费方式选“Token 额度”时使用，表示这个站点当前还剩多少 token；填 0 会跳过。",
                         "number",
-                        8,
+                        10,
                         min_value=0,
                         step=1000,
                         depends_on="billing_mode",
@@ -445,7 +474,7 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
                         "每日 Token 预算",
                         "计费方式选“Token 额度”时使用，表示这个站点每天最多允许消耗多少 token；填 0 表示不限制每日预算。",
                         "number",
-                        9,
+                        11,
                         min_value=0,
                         step=1000,
                         depends_on="billing_mode",
@@ -456,7 +485,7 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
                         [],
                         "模型计费覆盖",
                         "同一个中转站里有些模型按次、有些模型按量时，在这里按模型名称单独覆盖计费方式；不填则继承上面的站点计费方式。",
-                        10,
+                        12,
                     ),
                 },
             }
@@ -465,7 +494,7 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
             "plugin_id": plugin_id or "local.model-budget-router-cn",
             "plugin_info": {
                 "name": "模型预算分配器",
-                "version": plugin_version or "1.0.8",
+                "version": plugin_version or "1.0.9",
                 "description": "按任务、余额、预算、延迟和失败率自动选择中转站与模型。",
                 "author": plugin_author,
             },
@@ -490,7 +519,7 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
         CLIENT_TYPE,
         name="模型预算分配器",
         description="按余额、预算、延迟、失败率路由 OpenAI 兼容模型请求",
-        version="1.0.8",
+        version="1.0.9",
     )
     async def budget_router_provider(self, operation: str, request: dict[str, Any]) -> dict[str, Any]:
         if operation != "response":
@@ -1214,7 +1243,10 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
         if billing_mode == "token_quota":
             return {"money_yuan": 0.0, "tokens": total_tokens}
         if billing_mode == "per_call":
-            return {"money_yuan": max(0.0, float(billing.get("price_per_call_yuan") or 0.0)), "tokens": 0}
+            return {
+                "money_yuan": self._candidate_money_to_cny(candidate, max(0.0, float(billing.get("price_per_call_yuan") or 0.0))),
+                "tokens": 0,
+            }
 
         return {"money_yuan": self._estimate_model_price_cost(candidate, usage), "tokens": 0}
 
@@ -1240,19 +1272,25 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
 
         cache_hit_tokens = self._usage_int(usage, "prompt_cache_hit_tokens")
         cache_miss_tokens = self._usage_int(usage, "prompt_cache_miss_tokens")
-        cache_read_price = candidate.cache_read_price_in if candidate.cache_read_price_in > 0 else candidate.price_in
-        cache_create_price = candidate.cache_create_price_in if candidate.cache_create_price_in > 0 else candidate.price_in
+        price_in = self._candidate_money_to_cny(candidate, candidate.price_in)
+        price_out = self._candidate_money_to_cny(candidate, candidate.price_out)
+        cache_read_price = self._candidate_money_to_cny(
+            candidate, candidate.cache_read_price_in if candidate.cache_read_price_in > 0 else candidate.price_in
+        )
+        cache_create_price = self._candidate_money_to_cny(
+            candidate, candidate.cache_create_price_in if candidate.cache_create_price_in > 0 else candidate.price_in
+        )
 
         if cache_hit_tokens > 0 or cache_miss_tokens > 0:
             normal_prompt_tokens = max(0, prompt_tokens - cache_hit_tokens - cache_miss_tokens)
             input_cost = (
-                normal_prompt_tokens * candidate.price_in
+                normal_prompt_tokens * price_in
                 + cache_hit_tokens * cache_read_price
                 + cache_miss_tokens * cache_create_price
             )
         else:
-            input_cost = prompt_tokens * candidate.price_in
-        output_cost = completion_tokens * candidate.price_out
+            input_cost = prompt_tokens * price_in
+        output_cost = completion_tokens * price_out
         return (input_cost + output_cost) / 1_000_000.0
 
     def _resolve_task_name(self, request: dict[str, Any]) -> str:
@@ -1324,6 +1362,42 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
                 return item
         return {}
 
+    def _provider_money_to_cny(self, provider_name: str, amount: float) -> float:
+        amount = float(amount or 0.0)
+        if self._provider_currency(provider_name) == "USD":
+            return amount * self._provider_usd_to_cny_rate(provider_name)
+        return amount
+
+    def _candidate_money_to_cny(self, candidate: Candidate, amount: float) -> float:
+        return self._provider_money_to_cny(candidate.provider_name, amount)
+
+    def _provider_currency(self, provider_name: str) -> str:
+        return self._provider_currency_from_value(self._provider_override(provider_name).get("currency"))
+
+    def _provider_usd_to_cny_rate(self, provider_name: str) -> float:
+        override = self._provider_override(provider_name)
+        try:
+            rate = float(override.get("usd_to_cny_rate") or 7.2)
+        except (TypeError, ValueError):
+            rate = 7.2
+        return max(rate, 0.01)
+
+    @staticmethod
+    def _provider_currency_from_value(value: Any) -> str:
+        raw = str(value or "CNY").strip().upper()
+        aliases = {
+            "CNY": "CNY",
+            "RMB": "CNY",
+            "人民币": "CNY",
+            "¥": "CNY",
+            "￥": "CNY",
+            "USD": "USD",
+            "USDT": "USD",
+            "美元": "USD",
+            "$": "USD",
+        }
+        return aliases.get(raw, "CNY")
+
     @classmethod
     def _provider_billing_mode_label_from_value(cls, value: Any) -> str:
         labels = {
@@ -1363,12 +1437,14 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
         billing = self._candidate_billing_settings(candidate)
         billing_mode = str(billing.get("billing_mode") or "model_price")
         if billing_mode == "per_call":
-            return max(0.0, float(billing.get("price_per_call_yuan") or 0.0)) * 10.0
+            return self._candidate_money_to_cny(candidate, max(0.0, float(billing.get("price_per_call_yuan") or 0.0))) * 10.0
         if billing_mode == "token_quota":
             return 0.0
-        cache_read_price = candidate.cache_read_price_in if candidate.cache_read_price_in > 0 else candidate.price_in
-        cache_create_price = candidate.cache_create_price_in if candidate.cache_create_price_in > 0 else candidate.price_in
-        return max(0.0, candidate.price_in + candidate.price_out + cache_read_price + cache_create_price) / 200.0
+        price_in = self._candidate_money_to_cny(candidate, candidate.price_in)
+        price_out = self._candidate_money_to_cny(candidate, candidate.price_out)
+        cache_read_price = self._candidate_money_to_cny(candidate, candidate.cache_read_price_in if candidate.cache_read_price_in > 0 else candidate.price_in)
+        cache_create_price = self._candidate_money_to_cny(candidate, candidate.cache_create_price_in if candidate.cache_create_price_in > 0 else candidate.price_in)
+        return max(0.0, price_in + price_out + cache_read_price + cache_create_price) / 200.0
 
     def _provider_enabled(self, provider_name: str) -> bool:
         override = self._provider_override(provider_name)
@@ -1380,12 +1456,12 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
             return float(state_balance)
         override = self._provider_override(provider_name)
         providers = self._config.get("providers") if isinstance(self._config.get("providers"), dict) else {}
-        return float(override.get("balance_yuan", providers.get("default_balance_yuan", 9999.0)) or 0.0)
+        return self._provider_money_to_cny(provider_name, float(override.get("balance_yuan", providers.get("default_balance_yuan", 9999.0)) or 0.0))
 
     def _provider_daily_budget(self, provider_name: str) -> float:
         override = self._provider_override(provider_name)
         providers = self._config.get("providers") if isinstance(self._config.get("providers"), dict) else {}
-        return float(override.get("daily_budget_yuan", providers.get("default_daily_budget_yuan", 9999.0)) or 0.0)
+        return self._provider_money_to_cny(provider_name, float(override.get("daily_budget_yuan", providers.get("default_daily_budget_yuan", 9999.0)) or 0.0))
 
     def _provider_token_balance(self, provider_name: str) -> int:
         state_balance = self._provider_state(provider_name).get("estimated_token_balance")
@@ -1406,13 +1482,13 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
         if state_balance is not None:
             return float(state_balance)
         if key_override:
-            return float(key_override.get("balance_yuan") or 0.0)
+            return self._candidate_money_to_cny(candidate, float(key_override.get("balance_yuan") or 0.0))
         return self._provider_balance(candidate.provider_name)
 
     def _candidate_daily_budget(self, candidate: Candidate) -> float:
         key_override = self._api_key_budget_override(candidate.provider_name, candidate.api_key_index)
         if key_override:
-            return float(key_override.get("daily_budget_yuan") or 0.0)
+            return self._candidate_money_to_cny(candidate, float(key_override.get("daily_budget_yuan") or 0.0))
         return self._provider_daily_budget(candidate.provider_name)
 
     def _candidate_money_budget_state(self, candidate: Candidate) -> dict[str, Any]:

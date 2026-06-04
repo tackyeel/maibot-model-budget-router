@@ -35,7 +35,7 @@ class PluginSectionConfig(PluginConfigBase):
         json_schema_extra={"label": "启用插件"},
     )
     config_version: str = Field(
-        default="1.8.0",
+        default="1.9.0",
         description="配置文件版本",
         json_schema_extra={"label": "配置版本", "disabled": True},
     )
@@ -234,6 +234,8 @@ class ProviderOverrideConfig(PluginConfigBase):
     balance_yuan: float = Field(default=9999.0, ge=0.0, description="这个中转站当前余额估算，填 0 会跳过该站点", json_schema_extra={"label": "站点余额"})
     daily_budget_yuan: float = Field(default=9999.0, ge=0.0, description="这个中转站每天最多允许花多少钱，填 0 表示不限制每日预算", json_schema_extra={"label": "每日预算"})
     weight: float = Field(default=1.0, ge=0.0, le=10.0, description="站点优先级，越大越优先", json_schema_extra={"label": "优先级权重"})
+    currency: str = Field(default="CNY", description="这个中转站后台余额和价格使用的币种：CNY 或 USD", json_schema_extra={"label": "计价币种"})
+    usd_to_cny_rate: float = Field(default=7.2, ge=0.01, description="计价币种为 USD 时，1 美元折合多少人民币", json_schema_extra={"label": "美元兑人民币汇率"})
     billing_mode: str = Field(default="按模型价格", description="计费方式：按模型价格、按次扣费、Token 额度", json_schema_extra={"label": "计费方式"})
     price_per_call_yuan: float = Field(default=0.0, ge=0.0, description="按次扣费时，每次成功调用固定扣多少钱", json_schema_extra={"label": "每次调用价格"})
     token_balance: int = Field(default=0, ge=0, description="Token 额度模式下，这个站点当前还剩多少 token", json_schema_extra={"label": "Token 余额"})

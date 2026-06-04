@@ -17,6 +17,7 @@
 - 支持普通模型错误累计到阈值后自动关闭池内模型，默认 3 次。
 - 支持三种计费方式：按模型价格、按次扣费、Token 额度。
 - 支持同一中转站内按模型单独覆盖计费方式。
+- 支持站点按人民币或美元计价，并按汇率换算成内部人民币预算。
 
 ## 安装
 
@@ -103,6 +104,8 @@ planner = [
 - `balance_yuan`：估算余额。
 - `daily_budget_yuan`：每日预算。
 - `weight`：站点权重，越大越优先。
+- `currency`：站点后台使用的币种，支持 `CNY` 和 `USD`。
+- `usd_to_cny_rate`：计价币种为 `USD` 时使用的美元兑人民币汇率。
 - `billing_mode`：计费方式。
 - `price_per_call_yuan`：按次扣费时每次调用多少钱。
 - `token_balance`：Token 额度模式下的剩余 token。
@@ -119,6 +122,28 @@ token_quota   直接按 token 额度扣
 
 插件不会登录中转站后台查询真实余额，余额和额度是根据你的配置与调用量估算的。
 
+## 美元中转站
+
+如果中转站后台余额和模型价格都是美元，在站点配置里这样设置：
+
+```toml
+currency = "USD"
+usd_to_cny_rate = 7.2
+```
+
+之后这些字段都可以直接按中转站后台看到的美元填写：
+
+```text
+站点余额
+每日预算
+每次调用价格
+API Key 预算覆盖里的余额
+模型管理里的输入/输出/缓存价格
+模型计费覆盖里的每次调用价格
+```
+
+插件内部会统一换算成人民币来计算预算和路由。例如余额 `$6.11`、汇率 `7.2`，内部会按约 `43.99` 元人民币计算。
+
 ## 单模型计费覆盖
 
 如果同一个中转站里有些模型按次扣费，有些模型按量扣费，可以在对应站点的“模型计费覆盖”里单独配置。
@@ -133,6 +158,8 @@ token_quota   直接按 token 额度扣
   balance_yuan = 50.0,
   daily_budget_yuan = 10.0,
   weight = 1.0,
+  currency = "USD",
+  usd_to_cny_rate = 7.2,
   billing_mode = "按模型价格",
   price_per_call_yuan = 0.0,
   token_balance = 0,
@@ -168,6 +195,8 @@ token_quota   直接按 token 额度扣
   balance_yuan = 9999.0,
   daily_budget_yuan = 9999.0,
   weight = 1.0,
+  currency = "CNY",
+  usd_to_cny_rate = 7.2,
   billing_mode = "按模型价格",
   price_per_call_yuan = 0.0,
   token_balance = 0,
