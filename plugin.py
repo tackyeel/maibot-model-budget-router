@@ -17,8 +17,8 @@ from maibot_sdk import LLMProvider, MaiBotPlugin
 
 CLIENT_TYPE = "budget_router"
 ROUTER_MODEL_PREFIX = "router:"
-PLUGIN_VERSION = "1.1.1"
-CONFIG_VERSION = "1.1.1"
+PLUGIN_VERSION = "1.1.2"
+CONFIG_VERSION = "1.1.2"
 
 
 @dataclass(slots=True)
@@ -147,7 +147,9 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
             "usd_to_cny_rate": usd_to_cny_rate,
             "billing_mode": billing_mode,
             "api_keys": list(api_keys or []),
+            "api_keys_text": "\n".join(api_keys or []),
             "api_key_budget_overrides": [],
+            "api_key_budget_overrides_text": "",
             "price_per_call_yuan": price_per_call_yuan,
             "token_balance": token_balance,
             "daily_token_budget": daily_token_budget,
@@ -214,7 +216,9 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
                         "usd_to_cny_rate": float(providers.get("default_usd_to_cny_rate", 7.2) or 7.2),
                         "billing_mode": str(providers.get("default_billing_mode") or "按模型价格"),
                         "api_keys": [],
+                        "api_keys_text": "",
                         "api_key_budget_overrides": [],
+                        "api_key_budget_overrides_text": "",
                         "model_billing_overrides": [],
                         "price_per_call_yuan": float(providers.get("default_price_per_call_yuan", 0.0) or 0.0),
                         "token_balance": int(providers.get("default_token_balance", 0) or 0),
@@ -222,6 +226,10 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
                     }
                     if isinstance(provider_config, dict):
                         base.update(provider_config)
+                    if base.get("api_keys_text") not in (None, ""):
+                        base["api_keys"] = base.get("api_keys_text")
+                    if base.get("api_key_budget_overrides_text") not in (None, ""):
+                        base["api_key_budget_overrides"] = base.get("api_key_budget_overrides_text")
                     base["billing_mode"] = self._provider_billing_mode_label_from_value(base.get("billing_mode"))
                     base["currency"] = self._provider_currency_from_value(base.get("currency"))
                     if "token_balance" not in base:
@@ -239,7 +247,11 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
                     for numeric_key in ("token_balance", "daily_token_budget"):
                         base[numeric_key] = int(float(base.get(numeric_key) or 0))
                     base["api_keys"] = self._normalize_api_keys(base.get("api_keys"))
+                    base["api_keys_text"] = self._format_api_keys_text(base.get("api_keys"))
                     base["api_key_budget_overrides"] = self._normalize_api_key_budget_overrides(
+                        base.get("api_key_budget_overrides")
+                    )
+                    base["api_key_budget_overrides_text"] = self._format_api_key_budget_text(
                         base.get("api_key_budget_overrides")
                     )
                     base["model_billing_overrides"] = self._normalize_model_billing_overrides(
@@ -514,17 +526,17 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
                     "weight": self._schema_field(
                         "weight", "number", float(provider_config.get("weight", 1.0) or 0.0), "优先级权重", "稳定又便宜的站点建议 1.0，不稳定或想少用的站点建议 0.2 到 0.6。", "slider", 9, min_value=0, max_value=5, step=0.1, group="常用"
                     ),
-                    "api_keys": self._schema_string_list_field(
-                        "api_keys",
-                        self._format_api_keys_text(provider_config.get("api_keys")),
+                    "api_keys_text": self._schema_textarea_field(
+                        "api_keys_text",
+                        str(provider_config.get("api_keys_text") or self._format_api_keys_text(provider_config.get("api_keys"))),
                         "备用 API Keys",
                         "每行一个备用 API Key；主 Key 仍来自模型管理。某个 Key 没额度时会自动切到下一个。",
                         20,
                         group="高级",
                     ),
-                    "api_key_budget_overrides": self._schema_api_key_budget_list_field(
-                        "api_key_budget_overrides",
-                        self._format_api_key_budget_text(provider_config.get("api_key_budget_overrides")),
+                    "api_key_budget_overrides_text": self._schema_textarea_field(
+                        "api_key_budget_overrides_text",
+                        str(provider_config.get("api_key_budget_overrides_text") or self._format_api_key_budget_text(provider_config.get("api_key_budget_overrides"))),
                         "API Key 预算覆盖",
                         "每行一条：Key序号 | 余额 | 每日预算 | Token余额 | 每日Token预算 | 备注。0 是主 Key，1 是第 1 个备用 Key；不填则继承站点余额。",
                         21,
@@ -2098,6 +2110,14 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
     @classmethod
     def _schema_string_list_field(cls, name: str, default: str, label: str, hint: str, order: int, *, group: str | None = None) -> dict[str, Any]:
         return cls._schema_field(name, "string", default, label, hint, "textarea", order, group=group, rows=5)
+
+    @classmethod
+    def _schema_textarea_field(cls, name: str, default: str, label: str, hint: str, order: int, *, group: str | None = None) -> dict[str, Any]:
+        field = cls._schema_field(name, "string", default, label, hint, "text", order, group=group, rows=5)
+        field["x-widget"] = "textarea"
+        field["x-textarea-rows"] = 5
+        field["x-textarea-min-height"] = 120
+        return field
 
     @classmethod
     def _schema_model_billing_list_field(cls, name: str, default: list[dict[str, Any]], label: str, hint: str, order: int, *, group: str | None = None) -> dict[str, Any]:

@@ -1,6 +1,6 @@
 [plugin]
 enabled = true
-config_version = "1.1.1"
+config_version = "1.1.2"
 config_path = "/MaiMBot/config/model_config.toml"
 state_path = "data/router_state.json"
 log_detail = true
@@ -34,7 +34,7 @@ default_daily_budget_yuan = 9999.0
 default_weight = 1.0
 default_currency = "CNY"
 default_usd_to_cny_rate = 7.2
-default_billing_mode = "按模型价格"
+default_billing_mode = "鎸夋ā鍨嬩环鏍?
 default_price_per_call_yuan = 0.0
 default_token_balance = 0
 default_daily_token_budget = 0
