@@ -13,6 +13,7 @@
 - 候选模型失败时自动切换下一个。
 - 支持 429、403、402、余额不足、额度耗尽时自动切换同站点备用 API Key。
 - 支持同一中转站配置多个备用 API Key，某个 Key 没额度时自动切换下一个。
+- 支持按 API Key 序号单独设置余额、每日预算和 Token 额度。
 - 支持普通模型错误累计到阈值后自动关闭池内模型，默认 3 次。
 - 支持三种计费方式：按模型价格、按次扣费、Token 额度。
 - 支持同一中转站内按模型单独覆盖计费方式。
@@ -98,6 +99,7 @@ planner = [
 
 - `enabled`：是否启用这个中转站。
 - `api_keys`：备用 API Key 列表；主 Key 仍来自模型管理。
+- `api_key_budget_overrides`：按 Key 序号单独覆盖余额和预算；0 是主 Key，1 是第 1 个备用 Key。
 - `balance_yuan`：估算余额。
 - `daily_budget_yuan`：每日预算。
 - `weight`：站点权重，越大越优先。
@@ -143,6 +145,42 @@ token_quota   直接按 token 额度扣
 ```
 
 没有写进 `model_billing_overrides` 的模型，会继续继承这个中转站上面的默认计费方式。
+
+## 单 Key 预算覆盖
+
+如果同一个中转站配置了多个 Key，而且每个 Key 属于不同账号，可以按 Key 序号单独设置余额。
+
+序号规则：
+
+```text
+0 = 模型管理里的主 API Key
+1 = 备用 API Keys 里的第 1 个 Key
+2 = 备用 API Keys 里的第 2 个 Key
+```
+
+示例：
+
+```toml
+[providers.overrides]
+"示例站点" = {
+  enabled = true,
+  api_keys = ["sk-backup-1", "sk-backup-2"],
+  balance_yuan = 9999.0,
+  daily_budget_yuan = 9999.0,
+  weight = 1.0,
+  billing_mode = "按模型价格",
+  price_per_call_yuan = 0.0,
+  token_balance = 0,
+  daily_token_budget = 0,
+  api_key_budget_overrides = [
+    { key_index = 0, label = "主账号", balance_yuan = 10.0, daily_budget_yuan = 5.0, token_balance = 0, daily_token_budget = 0 },
+    { key_index = 1, label = "备用账号1", balance_yuan = 3.0, daily_budget_yuan = 1.0, token_balance = 0, daily_token_budget = 0 },
+    { key_index = 2, label = "备用账号2", balance_yuan = 20.0, daily_budget_yuan = 5.0, token_balance = 0, daily_token_budget = 0 },
+  ],
+}
+```
+
+如果当前请求是 Token 额度计费，插件会优先使用这个 Key 的 `token_balance` 和 `daily_token_budget`；如果是人民币计费，则使用 `balance_yuan` 和 `daily_budget_yuan`。
 
 ## 自动切换 API Key
 

@@ -35,7 +35,7 @@ class PluginSectionConfig(PluginConfigBase):
         json_schema_extra={"label": "启用插件"},
     )
     config_version: str = Field(
-        default="1.7.0",
+        default="1.8.0",
         description="配置文件版本",
         json_schema_extra={"label": "配置版本", "disabled": True},
     )
@@ -210,11 +210,27 @@ class ModelBillingOverrideConfig(PluginConfigBase):
     daily_token_budget: int = Field(default=0, ge=0, description="Token 额度模式下，这个模型每天最多允许消耗多少 token；填 0 表示不限制", json_schema_extra={"label": "每日 Token 预算"})
 
 
+class ApiKeyBudgetOverrideConfig(PluginConfigBase):
+    """同一中转站内单个 API Key 的预算覆盖。"""
+
+    key_index: int = Field(default=0, ge=0, description="0 是主 Key；1 是第 1 个备用 Key；2 是第 2 个备用 Key", json_schema_extra={"label": "Key 序号"})
+    label: str = Field(default="", description="备注，方便区分这个 Key", json_schema_extra={"label": "备注"})
+    balance_yuan: float = Field(default=0.0, ge=0.0, description="这个 Key 对应账号当前余额估算", json_schema_extra={"label": "Key 余额"})
+    daily_budget_yuan: float = Field(default=0.0, ge=0.0, description="这个 Key 每天最多允许花多少钱，填 0 表示不限制每日预算", json_schema_extra={"label": "Key 每日预算"})
+    token_balance: int = Field(default=0, ge=0, description="Token 额度模式下，这个 Key 当前还剩多少 token", json_schema_extra={"label": "Key Token 余额"})
+    daily_token_budget: int = Field(default=0, ge=0, description="Token 额度模式下，这个 Key 每天最多允许消耗多少 token；填 0 表示不限制", json_schema_extra={"label": "Key 每日 Token 预算"})
+
+
 class ProviderOverrideConfig(PluginConfigBase):
     """单个中转站预算配置。"""
 
     enabled: bool = Field(default=True, description="是否启用这个中转站", json_schema_extra={"label": "启用站点"})
     api_keys: List[str] = Field(default_factory=list, description="备用 API Key；主 Key 仍来自模型管理。某个 Key 没额度时会自动切下一个", json_schema_extra={"label": "备用 API Keys"})
+    api_key_budget_overrides: List[ApiKeyBudgetOverrideConfig] = Field(
+        default_factory=list,
+        description="按 API Key 序号单独覆盖余额和每日预算；0 是主 Key，1 是第 1 个备用 Key",
+        json_schema_extra={"label": "API Key 预算覆盖"},
+    )
     balance_yuan: float = Field(default=9999.0, ge=0.0, description="这个中转站当前余额估算，填 0 会跳过该站点", json_schema_extra={"label": "站点余额"})
     daily_budget_yuan: float = Field(default=9999.0, ge=0.0, description="这个中转站每天最多允许花多少钱，填 0 表示不限制每日预算", json_schema_extra={"label": "每日预算"})
     weight: float = Field(default=1.0, ge=0.0, le=10.0, description="站点优先级，越大越优先", json_schema_extra={"label": "优先级权重"})
