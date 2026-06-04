@@ -1,6 +1,6 @@
 [plugin]
 enabled = true
-config_version = "1.10.0"
+config_version = "1.1.0"
 config_path = "/MaiMBot/config/model_config.toml"
 state_path = "data/router_state.json"
 log_detail = true
@@ -10,6 +10,7 @@ latency_weight = 1.0
 cost_weight = 0.35
 balance_weight = 0.65
 auto_sync_providers = true
+auto_prune_removed_providers = true
 auto_switch_api_key_on_quota = true
 auto_disable_model_when_all_keys_failed = false
 auto_disable_on_errors = true
@@ -30,6 +31,11 @@ vlm = [{ name = "gemini-2.5-flash", enabled = true }]
 [providers]
 default_balance_yuan = 9999.0
 default_daily_budget_yuan = 9999.0
+default_weight = 1.0
+default_currency = "CNY"
+default_usd_to_cny_rate = 7.2
+default_billing_mode = "按模型价格"
+default_price_per_call_yuan = 0.0
 default_token_balance = 0
 default_daily_token_budget = 0
 

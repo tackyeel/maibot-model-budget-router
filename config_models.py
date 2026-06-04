@@ -35,7 +35,7 @@ class PluginSectionConfig(PluginConfigBase):
         json_schema_extra={"label": "启用插件"},
     )
     config_version: str = Field(
-        default="1.10.0",
+        default="1.1.0",
         description="配置文件版本",
         json_schema_extra={"label": "配置版本", "disabled": True},
     )
@@ -93,6 +93,11 @@ class PluginSectionConfig(PluginConfigBase):
         default=True,
         description="打开插件配置页或插件启动时，从模型管理配置自动补齐新中转站",
         json_schema_extra={"label": "自动同步中转站"},
+    )
+    auto_prune_removed_providers: bool = Field(
+        default=True,
+        description="模型管理里删掉某个中转站后，自动移除插件里的对应站点配置",
+        json_schema_extra={"label": "自动清理已删除中转站"},
     )
     auto_switch_api_key_on_quota: bool = Field(
         default=True,
@@ -258,6 +263,11 @@ class ProvidersSectionConfig(PluginConfigBase):
 
     default_balance_yuan: float = Field(default=9999.0, ge=0.0, description="没有单独配置的中转站默认余额", json_schema_extra={"label": "默认余额"})
     default_daily_budget_yuan: float = Field(default=9999.0, ge=0.0, description="没有单独配置的中转站默认每日预算", json_schema_extra={"label": "默认每日预算"})
+    default_weight: float = Field(default=1.0, ge=0.0, le=10.0, description="新同步中转站默认优先权重", json_schema_extra={"label": "默认优先权重"})
+    default_currency: str = Field(default="CNY", description="新同步中转站默认后台币种：CNY 或 USD", json_schema_extra={"label": "默认币种"})
+    default_usd_to_cny_rate: float = Field(default=7.2, ge=0.01, description="默认币种为 USD 时，1 美元折合多少人民币", json_schema_extra={"label": "默认美元汇率"})
+    default_billing_mode: str = Field(default="按模型价格", description="新同步中转站默认计费方式", json_schema_extra={"label": "默认计费方式"})
+    default_price_per_call_yuan: float = Field(default=0.0, ge=0.0, description="默认计费方式为按次扣费时，每次调用固定价格", json_schema_extra={"label": "默认每次调用价格"})
     default_token_balance: int = Field(default=0, ge=0, description="Token 额度模式下，没有单独配置的中转站默认 token 余额", json_schema_extra={"label": "默认 Token 额度"})
     default_daily_token_budget: int = Field(default=0, ge=0, description="Token 额度模式下，没有单独配置的中转站默认每日 token 预算；填 0 表示不限制", json_schema_extra={"label": "默认每日 Token 预算"})
     overrides: Dict[str, ProviderOverrideConfig] = Field(default_factory=dict, description="按中转站名称覆盖余额、预算和权重", json_schema_extra={"label": "站点单独设置"})
