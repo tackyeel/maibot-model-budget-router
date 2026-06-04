@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import math
 import time
@@ -25,6 +26,8 @@ class Candidate:
     provider_name: str
     base_url: str
     api_key: str
+    api_key_id: str
+    api_key_index: int
     timeout: float
     price_in: float
     price_out: float
@@ -72,7 +75,7 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
         return {
             "plugin": {
                 "enabled": True,
-                "config_version": "1.4.0",
+                "config_version": "1.5.0",
                 "config_path": "/MaiMBot/config/model_config.toml",
                 "state_path": "data/router_state.json",
                 "log_detail": True,
@@ -119,6 +122,7 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
         daily_budget_yuan: float,
         weight: float,
         billing_mode: str = "按模型价格",
+        api_keys: list[str] | None = None,
         price_per_call_yuan: float = 0.0,
         token_balance: int = 0,
         daily_token_budget: int = 0,
@@ -129,6 +133,7 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
             "daily_budget_yuan": daily_budget_yuan,
             "weight": weight,
             "billing_mode": billing_mode,
+            "api_keys": list(api_keys or []),
             "price_per_call_yuan": price_per_call_yuan,
             "token_balance": token_balance,
             "daily_token_budget": daily_token_budget,
@@ -141,7 +146,7 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
 
         plugin = normalized.setdefault("plugin", {})
         if isinstance(plugin, dict):
-            plugin["config_version"] = "1.4.0"
+            plugin["config_version"] = "1.5.0"
             plugin.setdefault("auto_sync_providers", True)
             plugin.setdefault("auto_disable_on_429", True)
             plugin.setdefault("auto_disable_on_errors", True)
@@ -168,6 +173,7 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
                         "daily_budget_yuan": float(providers.get("default_daily_budget_yuan", 9999.0) or 0.0),
                         "weight": 1.0,
                         "billing_mode": "按模型价格",
+                        "api_keys": [],
                         "price_per_call_yuan": 0.0,
                         "token_balance": int(providers.get("default_token_balance", 0) or 0),
                         "daily_token_budget": int(providers.get("default_daily_token_budget", 0) or 0),
@@ -188,6 +194,11 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
                         base[numeric_key] = float(base.get(numeric_key) or 0.0)
                     for numeric_key in ("token_balance", "daily_token_budget"):
                         base[numeric_key] = int(float(base.get(numeric_key) or 0))
+                    if isinstance(base.get("api_keys"), str):
+                        base["api_keys"] = [base["api_keys"]]
+                    elif not isinstance(base.get("api_keys"), list):
+                        base["api_keys"] = []
+                    base["api_keys"] = [str(item).strip() for item in base["api_keys"] if str(item).strip()]
                     overrides[provider_name] = base
 
         return normalized, normalized != current
@@ -220,7 +231,7 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
                 "fields": {
                     "enabled": self._schema_field("enabled", "boolean", True, "启用插件", "是否启用模型预算分配器", "switch", 0),
                     "config_version": self._schema_field(
-                        "config_version", "string", "1.4.0", "配置版本", "配置文件版本，请勿手动修改。", "text", 1, disabled=True
+                        "config_version", "string", "1.5.0", "配置版本", "配置文件版本，请勿手动修改。", "text", 1, disabled=True
                     ),
                     "config_path": self._schema_field(
                         "config_path",
@@ -345,14 +356,17 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
                 "order": 10 + index,
                 "fields": {
                     "enabled": self._schema_field("enabled", "boolean", True, "启用站点", "是否允许分配请求到这个中转站。", "switch", 0),
+                    "api_keys": self._schema_string_list_field(
+                        "api_keys", [], "备用 API Keys", "可填多个备用 API Key；主 Key 仍来自模型管理。某个 Key 没额度时会自动切到下一个。", 1
+                    ),
                     "balance_yuan": self._schema_field(
-                        "balance_yuan", "number", 9999.0, "站点余额", "这个中转站当前大概还剩多少钱；填 0 会跳过。", "number", 1, min_value=0, step=0.01
+                        "balance_yuan", "number", 9999.0, "站点余额", "这个中转站当前大概还剩多少钱；填 0 会跳过。", "number", 2, min_value=0, step=0.01
                     ),
                     "daily_budget_yuan": self._schema_field(
-                        "daily_budget_yuan", "number", 9999.0, "每日预算", "这个中转站每天最多允许花多少钱；填 0 表示不限制每日预算。", "number", 2, min_value=0, step=0.01
+                        "daily_budget_yuan", "number", 9999.0, "每日预算", "这个中转站每天最多允许花多少钱；填 0 表示不限制每日预算。", "number", 3, min_value=0, step=0.01
                     ),
                     "weight": self._schema_field(
-                        "weight", "number", 1.0, "优先级权重", "稳定又便宜的站点建议 1.0，不稳定或想少用的站点建议 0.2 到 0.6。", "slider", 3, min_value=0, max_value=5, step=0.1
+                        "weight", "number", 1.0, "优先级权重", "稳定又便宜的站点建议 1.0，不稳定或想少用的站点建议 0.2 到 0.6。", "slider", 4, min_value=0, max_value=5, step=0.1
                     ),
                     "billing_mode": self._schema_field(
                         "billing_mode",
@@ -361,7 +375,7 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
                         "计费方式",
                         "按模型价格=使用模型管理里的输入、补全、缓存读取、缓存创建价格；按次扣费=每次成功调用固定扣钱；Token 额度=按站点剩余 token 数扣额度。",
                         "select",
-                        4,
+                        5,
                         choices=["按模型价格", "按次扣费", "Token 额度"],
                     ),
                     "price_per_call_yuan": self._schema_field(
@@ -371,7 +385,7 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
                         "每次调用价格",
                         "计费方式选“按次扣费”时使用。例如一次 0.2 元就填 0.2。",
                         "number",
-                        5,
+                        6,
                         min_value=0,
                         step=0.001,
                         depends_on="billing_mode",
@@ -384,7 +398,7 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
                         "Token 余额",
                         "计费方式选“Token 额度”时使用，表示这个站点当前还剩多少 token；填 0 会跳过。",
                         "number",
-                        6,
+                        7,
                         min_value=0,
                         step=1000,
                         depends_on="billing_mode",
@@ -397,7 +411,7 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
                         "每日 Token 预算",
                         "计费方式选“Token 额度”时使用，表示这个站点每天最多允许消耗多少 token；填 0 表示不限制每日预算。",
                         "number",
-                        7,
+                        8,
                         min_value=0,
                         step=1000,
                         depends_on="billing_mode",
@@ -410,7 +424,7 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
             "plugin_id": plugin_id or "local.model-budget-router-cn",
             "plugin_info": {
                 "name": "模型预算分配器",
-                "version": plugin_version or "1.0.4",
+                "version": plugin_version or "1.0.5",
                 "description": "按任务、余额、预算、延迟和失败率自动选择中转站与模型。",
                 "author": plugin_author,
             },
@@ -435,7 +449,7 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
         CLIENT_TYPE,
         name="模型预算分配器",
         description="按余额、预算、延迟、失败率路由 OpenAI 兼容模型请求",
-        version="1.0.4",
+        version="1.0.5",
     )
     async def budget_router_provider(self, operation: str, request: dict[str, Any]) -> dict[str, Any]:
         if operation != "response":
@@ -658,69 +672,13 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
                 continue
             if not self._provider_has_budget(provider_name):
                 continue
-            if self._candidate_auto_disabled(name, provider_name):
-                disabled_candidates.append(
-                    Candidate(
-                        name=name,
-                        model_identifier=str(model.get("model_identifier") or name),
-                        provider_name=provider_name,
-                        base_url=str(provider.get("base_url") or "").rstrip("/"),
-                        api_key=str(provider.get("api_key") or ""),
-                        timeout=float(provider.get("timeout") or 30),
-                        price_in=float(model.get("price_in") or 0),
-                        price_out=float(model.get("price_out") or 0),
-                        cache_read_price_in=self._first_float(
-                            model,
-                            "cache_read_price_in",
-                            "cache_price_read",
-                            "cache_price_read_in",
-                            "price_cache_read",
-                            "cache_price_in",
-                        ),
-                        cache_create_price_in=self._first_float(
-                            model,
-                            "cache_create_price_in",
-                            "cache_write_price_in",
-                            "cache_price_create",
-                            "cache_price_create_in",
-                            "price_cache_create",
-                        ),
-                        visual=bool(model.get("visual", False)),
-                        extra_params=dict(model.get("extra_params") or {}),
-                    )
-                )
-                continue
-
-            candidates.append(
-                Candidate(
-                    name=name,
-                    model_identifier=str(model.get("model_identifier") or name),
-                    provider_name=provider_name,
-                    base_url=str(provider.get("base_url") or "").rstrip("/"),
-                    api_key=str(provider.get("api_key") or ""),
-                    timeout=float(provider.get("timeout") or 30),
-                    price_in=float(model.get("price_in") or 0),
-                    price_out=float(model.get("price_out") or 0),
-                    cache_read_price_in=self._first_float(
-                        model,
-                        "cache_read_price_in",
-                        "cache_price_read",
-                        "cache_price_read_in",
-                        "price_cache_read",
-                        "cache_price_in",
-                    ),
-                    cache_create_price_in=self._first_float(
-                        model,
-                        "cache_create_price_in",
-                        "cache_write_price_in",
-                        "cache_price_create",
-                        "cache_price_create_in",
-                        "price_cache_create",
-                    ),
-                    visual=bool(model.get("visual", False)),
-                    extra_params=dict(model.get("extra_params") or {}),
-                )
-            )
+            api_keys = self._provider_api_keys(provider_name, provider)
+            for api_key_info in api_keys:
+                candidate = self._make_candidate(name, model, provider_name, provider, api_key_info)
+                if self._candidate_auto_disabled(name, provider_name) or self._api_key_auto_disabled(provider_name, candidate.api_key_id):
+                    disabled_candidates.append(candidate)
+                    continue
+                candidates.append(candidate)
 
         if not candidates and disabled_candidates:
             self.ctx.logger.warning(
@@ -732,6 +690,77 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
         for candidate in candidates:
             candidate.score = self._score_candidate(candidate)
         return sorted(candidates, key=lambda item: item.score, reverse=True)
+
+    def _make_candidate(
+        self,
+        name: str,
+        model: dict[str, Any],
+        provider_name: str,
+        provider: dict[str, Any],
+        api_key_info: dict[str, Any],
+    ) -> Candidate:
+        return Candidate(
+            name=name,
+            model_identifier=str(model.get("model_identifier") or name),
+            provider_name=provider_name,
+            base_url=str(provider.get("base_url") or "").rstrip("/"),
+            api_key=str(api_key_info.get("api_key") or ""),
+            api_key_id=str(api_key_info.get("api_key_id") or ""),
+            api_key_index=int(api_key_info.get("api_key_index") or 0),
+            timeout=float(provider.get("timeout") or 30),
+            price_in=float(model.get("price_in") or 0),
+            price_out=float(model.get("price_out") or 0),
+            cache_read_price_in=self._first_float(
+                model,
+                "cache_read_price_in",
+                "cache_price_read",
+                "cache_price_read_in",
+                "price_cache_read",
+                "cache_price_in",
+            ),
+            cache_create_price_in=self._first_float(
+                model,
+                "cache_create_price_in",
+                "cache_write_price_in",
+                "cache_price_create",
+                "cache_price_create_in",
+                "price_cache_create",
+            ),
+            visual=bool(model.get("visual", False)),
+            extra_params=dict(model.get("extra_params") or {}),
+        )
+
+    def _provider_api_keys(self, provider_name: str, provider: dict[str, Any]) -> list[dict[str, Any]]:
+        keys: list[str] = []
+        primary_key = str(provider.get("api_key") or "").strip()
+        if primary_key:
+            keys.append(primary_key)
+
+        override_keys = self._provider_override(provider_name).get("api_keys", [])
+        if isinstance(override_keys, str):
+            override_keys = [override_keys]
+        if isinstance(override_keys, list):
+            keys.extend(str(item).strip() for item in override_keys if str(item).strip())
+
+        seen: set[str] = set()
+        result: list[dict[str, Any]] = []
+        for index, api_key in enumerate(keys):
+            if api_key in seen:
+                continue
+            seen.add(api_key)
+            result.append(
+                {
+                    "api_key": api_key,
+                    "api_key_index": len(result),
+                    "api_key_id": self._api_key_id(api_key, len(result)),
+                }
+            )
+        return result
+
+    @staticmethod
+    def _api_key_id(api_key: str, index: int) -> str:
+        digest = hashlib.sha256(api_key.encode("utf-8", errors="ignore")).hexdigest()[:12]
+        return f"key{index}:{digest}"
 
     def _pool_model_names(self, task_name: str) -> list[str]:
         pools = self._config.get("pools") if isinstance(self._config.get("pools"), dict) else {}
@@ -1021,13 +1050,20 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
             self._rotate_daily_state_locked()
             provider = self._provider_state(candidate.provider_name)
             model = self._model_state(candidate.name)
+            api_key_state = self._api_key_state(candidate.provider_name, candidate.api_key_id)
             self._update_latency(provider, elapsed)
             self._update_latency(model, elapsed)
+            self._update_latency(api_key_state, elapsed)
             provider["consecutive_failures"] = 0
             model["consecutive_failures"] = 0
+            api_key_state["consecutive_failures"] = 0
             model["general_error_count"] = 0
+            if isinstance(provider.get("auto_disabled_api_keys"), dict):
+                provider["auto_disabled_api_keys"].pop(candidate.api_key_id, None)
+            api_key_state.pop("auto_disabled", None)
             provider["success_count"] = int(provider.get("success_count") or 0) + 1
             model["success_count"] = int(model.get("success_count") or 0) + 1
+            api_key_state["success_count"] = int(api_key_state.get("success_count") or 0) + 1
             usage = result.get("usage") if isinstance(result.get("usage"), dict) else {}
             charge = self._estimate_charge(candidate, usage)
             money_yuan = charge["money_yuan"]
@@ -1045,23 +1081,38 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
             self._rotate_daily_state_locked()
             provider = self._provider_state(candidate.provider_name)
             model = self._model_state(candidate.name)
+            api_key_state = self._api_key_state(candidate.provider_name, candidate.api_key_id)
             self._update_latency(provider, elapsed)
             self._update_latency(model, elapsed)
+            self._update_latency(api_key_state, elapsed)
             provider["consecutive_failures"] = int(provider.get("consecutive_failures") or 0) + 1
             model["consecutive_failures"] = int(model.get("consecutive_failures") or 0) + 1
+            api_key_state["consecutive_failures"] = int(api_key_state.get("consecutive_failures") or 0) + 1
             provider["failure_count"] = int(provider.get("failure_count") or 0) + 1
             model["failure_count"] = int(model.get("failure_count") or 0) + 1
+            api_key_state["failure_count"] = int(api_key_state.get("failure_count") or 0) + 1
             provider["last_error"] = error[-300:]
             model["last_error"] = error[-300:]
+            api_key_state["last_error"] = error[-300:]
             if bool(self._cfg("plugin", "auto_disable_on_429", default=True)) and self._is_quota_or_429_error(error):
-                self._mark_candidate_auto_disabled_locked(candidate, error, disable_type="quota_or_429_403")
-                self._disable_model_in_pools(candidate.name, error, disable_type="quota_or_429_403")
-                self.ctx.logger.warning(
-                    "模型池模型已因 429/403/额度错误自动关闭: model=%s provider=%s reason=%s",
-                    candidate.name,
-                    candidate.provider_name,
-                    error[-180:],
-                )
+                self._mark_api_key_auto_disabled_locked(candidate, error, disable_type="quota_or_429_403")
+                if self._has_available_api_key_locked(candidate.provider_name, exclude_key_id=candidate.api_key_id):
+                    self.ctx.logger.warning(
+                        "API Key 已因 429/403/额度错误自动关闭，将切换备用 Key: model=%s provider=%s key=%s reason=%s",
+                        candidate.name,
+                        candidate.provider_name,
+                        candidate.api_key_id,
+                        error[-180:],
+                    )
+                else:
+                    self._mark_candidate_auto_disabled_locked(candidate, error, disable_type="quota_or_429_403")
+                    self._disable_model_in_pools(candidate.name, error, disable_type="quota_or_429_403")
+                    self.ctx.logger.warning(
+                        "模型池模型已因所有 API Key 额度错误自动关闭: model=%s provider=%s reason=%s",
+                        candidate.name,
+                        candidate.provider_name,
+                        error[-180:],
+                    )
             elif self._should_count_general_error(error):
                 general_errors = int(model.get("general_error_count") or 0) + 1
                 model["general_error_count"] = general_errors
@@ -1279,21 +1330,33 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
         model_disabled = self._model_state(model_name).get("auto_disabled_providers")
         return isinstance(model_disabled, dict) and bool(model_disabled.get(provider_name))
 
+    def _api_key_auto_disabled(self, provider_name: str, api_key_id: str) -> bool:
+        if not bool(self._cfg("plugin", "auto_disable_on_429", default=True)):
+            return False
+        disabled = self._provider_state(provider_name).get("auto_disabled_api_keys")
+        return isinstance(disabled, dict) and bool(disabled.get(api_key_id))
+
     @staticmethod
     def _is_quota_or_429_error(error: str) -> bool:
         text = error.lower()
         patterns = (
             "429",
             "403",
+            "402",
             "rate limit",
             "too many requests",
             "insufficient",
             "quota",
             "quota is not enough",
             "balance",
+            "billing",
+            "payment",
+            "credit",
             "no credit",
             "not enough",
+            "out of credit",
             "余额不足",
+            "余额",
             "额度不足",
             "额度耗尽",
             "余额耗尽",
@@ -1319,6 +1382,43 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
         payload = {"disabled_at": disabled_at, "reason": error[-300:], "type": disable_type}
         provider.setdefault("auto_disabled_models", {})[candidate.name] = payload
         model.setdefault("auto_disabled_providers", {})[candidate.provider_name] = payload
+
+    def _mark_api_key_auto_disabled_locked(self, candidate: Candidate, error: str, *, disable_type: str) -> None:
+        provider = self._provider_state(candidate.provider_name)
+        key_state = self._api_key_state(candidate.provider_name, candidate.api_key_id)
+        disabled_at = int(time.time())
+        payload = {
+            "disabled_at": disabled_at,
+            "reason": error[-300:],
+            "type": disable_type,
+            "model": candidate.name,
+            "key_index": candidate.api_key_index,
+        }
+        provider.setdefault("auto_disabled_api_keys", {})[candidate.api_key_id] = payload
+        key_state["auto_disabled"] = payload
+
+    def _has_available_api_key_locked(self, provider_name: str, *, exclude_key_id: str = "") -> bool:
+        try:
+            model_config = self._load_model_config()
+        except Exception:
+            return False
+        provider = next(
+            (
+                item
+                for item in model_config.get("api_providers", [])
+                if isinstance(item, dict) and str(item.get("name") or "") == provider_name
+            ),
+            None,
+        )
+        if not isinstance(provider, dict):
+            return False
+        for item in self._provider_api_keys(provider_name, provider):
+            api_key_id = str(item.get("api_key_id") or "")
+            if api_key_id == exclude_key_id:
+                continue
+            if not self._api_key_auto_disabled(provider_name, api_key_id):
+                return True
+        return False
 
     def _disable_model_in_pools(self, model_name: str, error: str, *, disable_type: str) -> bool:
         pools = self._config.get("pools") if isinstance(self._config.get("pools"), dict) else {}
@@ -1381,6 +1481,14 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
     def _model_state(self, model_name: str) -> dict[str, Any]:
         models = self._state.setdefault("models", {})
         return models.setdefault(model_name, {})
+
+    def _api_key_state(self, provider_name: str, api_key_id: str) -> dict[str, Any]:
+        provider = self._provider_state(provider_name)
+        keys = provider.setdefault("api_keys", {})
+        if not isinstance(keys, dict):
+            keys = {}
+            provider["api_keys"] = keys
+        return keys.setdefault(api_key_id, {})
 
     def _rotate_daily_state_locked(self) -> None:
         today = self._today()
@@ -1487,15 +1595,24 @@ class ModelBudgetRouterPlugin(MaiBotPlugin):
         field["max_items"] = None
         return field
 
+    @classmethod
+    def _schema_string_list_field(cls, name: str, default: list[str], label: str, hint: str, order: int) -> dict[str, Any]:
+        field = cls._schema_field(name, "array", default, label, hint, "list", order)
+        field["item_type"] = "string"
+        field["min_items"] = 0
+        field["max_items"] = None
+        return field
+
     def _log_route(self, task_name: str, candidate: Candidate, elapsed: float, result: dict[str, Any]) -> None:
         if not bool(self._cfg("plugin", "log_detail", default=True)):
             return
         usage = result.get("usage") if isinstance(result.get("usage"), dict) else {}
         self.ctx.logger.info(
-            "模型预算分配: task=%s model=%s provider=%s elapsed=%.2fs tokens=%s score=%.3f",
+            "模型预算分配: task=%s model=%s provider=%s key=%s elapsed=%.2fs tokens=%s score=%.3f",
             task_name,
             candidate.name,
             candidate.provider_name,
+            candidate.api_key_id,
             elapsed,
             usage.get("total_tokens", 0),
             candidate.score,

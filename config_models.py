@@ -35,7 +35,7 @@ class PluginSectionConfig(PluginConfigBase):
         json_schema_extra={"label": "启用插件"},
     )
     config_version: str = Field(
-        default="1.4.0",
+        default="1.5.0",
         description="配置文件版本",
         json_schema_extra={"label": "配置版本", "disabled": True},
     )
@@ -199,6 +199,7 @@ class ProviderOverrideConfig(PluginConfigBase):
     """单个中转站预算配置。"""
 
     enabled: bool = Field(default=True, description="是否启用这个中转站", json_schema_extra={"label": "启用站点"})
+    api_keys: List[str] = Field(default_factory=list, description="备用 API Key；主 Key 仍来自模型管理。某个 Key 没额度时会自动切下一个", json_schema_extra={"label": "备用 API Keys"})
     balance_yuan: float = Field(default=9999.0, ge=0.0, description="这个中转站当前余额估算，填 0 会跳过该站点", json_schema_extra={"label": "站点余额"})
     daily_budget_yuan: float = Field(default=9999.0, ge=0.0, description="这个中转站每天最多允许花多少钱，填 0 表示不限制每日预算", json_schema_extra={"label": "每日预算"})
     weight: float = Field(default=1.0, ge=0.0, le=10.0, description="站点优先级，越大越优先", json_schema_extra={"label": "优先级权重"})
